@@ -1,0 +1,269 @@
+ConsAI Changelog
+APPEND TO THIS FILE
+
+2025-10-17
+
+- ConsAI: Rename 'claude' to 'sonnet' and add 'haiku' model
+  - Backend `consai.py`:
+    - Renamed model key 'claude' to 'sonnet' (still uses anthropic/claude-sonnet-4.5)
+    - Added 'haiku' model: anthropic/claude-4.5-haiku with reasoning tokens: 32768
+    - Updated default bot from 'claude' to 'sonnet'
+  - Usage:
+    - Use /sonnet to address Claude Sonnet 4.5
+    - Use /haiku to address Claude Haiku 4.5
+    - Both support extended reasoning (32k tokens)
+
+- ConsAI: Add Gemini CLI integration with automatic context injection
+  - Backend `consai.py`:
+    - Added `_format_context_for_gemini()` method to format recent conversation history (last 5 messages by default) as context
+    - Updated system prompt with detailed Gemini CLI usage instructions including heredoc syntax for context-aware queries
+    - Added `/gemini <query>` command that automatically includes conversation context when calling Gemini CLI
+    - Gemini responses are added to conversation history so other models can reference them
+    - All Gemini calls use `NODE_NO_WARNINGS=1` environment variable to suppress Node.js deprecation warnings
+  - Features:
+    - Models can call Gemini via executeshell for web search, fact-checking, and real-time information
+    - Supports both simple queries (`NODE_NO_WARNINGS=1 gemini "question"`) and context-aware queries (using heredoc)
+    - User can directly invoke with `/gemini` command for quick web searches with auto-context
+    - Output displayed in magenta color to distinguish from other tool calls
+  - Use cases:
+    - Verify facts and dates
+    - Get current information not in training data
+    - Web search results
+    - Second opinions on technical decisions
+    - Latest documentation or release info
+
+2025-01-XX
+
+- ConsAI: Fix Qwen3 Max tool call API error by removing duplicate assistant messages
+  - Backend `consai.py`:
+    - Removed duplicate addition of assistant message with tool_calls in `_handle_tool_calls()` method
+    - The assistant message with tool_calls was being added twice - once in `_call_bot()` and again in `_handle_tool_calls()`
+    - This violated the OpenAI API requirement that tool_calls must be immediately followed by tool response messages
+  - Impact: Fixes the "An assistant message with tool_calls must be followed by tool messages" error when using Qwen3 Max model
+
+2025-08-18
+
+- Web: Fix excess whitespace in tool execution output
+  - Backend `webv.py`:
+    - Trim trailing newline from each subprocess line chunk (`proc.stdout.readline()` → `rstrip("\n")`).
+    - Normalize assistant content spacing by converting 3+ consecutive newlines to 2 during streaming and when saving to history.
+
+- Web: Scoped CSS to collapse selectable whitespace in tool blocks
+  - Frontend `webv.html`:
+    - `.block.tool { white-space: normal; }`
+    - `.block.tool .tool-command { white-space: pre-line; }`
+    - `.block.tool .tool-output { white-space: pre-wrap; }`
+
+Impact
+- Removes the large blank gap between the tool command and its output.
+- Agent responses now show at most one blank line between paragraphs (i.e., two newlines), preserving readable formatting.
+- Output formatting (code/ANSI text) remains intact.
+
+
+- Web: Add Markdown rendering and syntax highlighting for assistant responses
+  - Frontend `webv.html`:
+    - Include Marked (Markdown), DOMPurify (sanitization), and Highlight.js (syntax highlighting) + GitHub theme CSS.
+    - Add `renderMarkdownToElement()` to parse → sanitize → highlight.
+    - Stream handler now buffers assistant content and re-renders progressively as chunks arrive.
+    - Style updates for code blocks and `.block.assistant .content` to render HTML and improve readability.
+  - Impact: Assistant messages support headings, lists, tables, and fenced code blocks with syntax highlighting.
+
+- Web: Preserve line breaks in tool output (e.g., `ls -l`)
+  - Backend `webv.py`: stop stripping newlines from `readline()`; yield lines as-is.
+  - Frontend `webv.html`: append a defensive newline after each `tool_chunk` if missing.
+  - Impact: CLI outputs render one entry per line instead of appearing concatenated.
+
+- Web: Add horizontal padding for assistant markdown content
+  - Frontend `webv.html`: `.block.assistant .content { padding-left: 10px; padding-right: 10px; }`
+  - Impact: Better readability with balanced gutters around rendered markdown.
+
+- Web: Mobile/desktop input UX improvements
+  - Frontend `webv.html`:
+    - Buttons visible and sticky on mobile: `.input-area { position: sticky; bottom: 0; padding-bottom: calc(16px + env(safe-area-inset-bottom)); }` and 100dvh height fixes for body/container.
+    - Buttons centered in one row under the textarea across devices; not expanded on mobile.
+    - Enter behavior is device-aware:
+      - Desktop: Enter sends; Shift+Enter inserts newline.
+      - Mobile/tablet: Enter inserts newline; tap Send to submit.
+  - Impact: Reliable mobile visibility/interaction and ergonomic input on each platform.
+
+- Web: Add individual message deletion with 🗑️ icons
+  - Frontend `webv.html`:
+    - Delete button (🗑️) appears in top-right corner of every message block (user, assistant, tool).
+    - Always visible at 60% opacity; highlights on hover/touch for instant feedback.
+    - Fast deletion: 200ms fade/scale animation then immediate DOM removal.
+    - Unique message IDs using random 64-bit numbers (mobile-compatible).
+  - Backend `webv.py`:
+    - New `/api/message/delete` endpoint removes messages from conversation history by ID.
+    - All messages now include `message_id` field for tracking and deletion.
+    - Updated request models: `ChatStartRequest`, `ExecDirectRequest`, `DeleteMessageRequest`.
+  - Impact: Rapid context pruning - click any 🗑️ to instantly remove unwanted messages from chat and AI memory.
+
+2025-08-19
+
+- Tool Calling: Make DeepSeek parsing robust
+  - Backend `webv.py`:
+    - Updated regex to handle spaces, tabs, and special Unicode whitespace (`\u2581`) in DeepSeek tool tags.
+    - Switched from non-greedy (`.*?`) to greedy (`.*`) matching for command arguments to correctly capture complex, multi-line shell commands.
+  - Impact: Reliably captures and executes complex tool calls from DeepSeek models that were previously missed.
+
+- Tool Calling: Execute tool calls found in AI reasoning/thoughts
+  - Backend `webv.py`: The tool parsing logic now scans both the `reasoning` and `content` streams, ensuring that any valid tool call is executed, regardless of where the model places it.
+  - Impact: Increases the reliability of autonomous operations, as the AI can now act on a command even if it formulates it as part of its internal monologue.
+
+- UI: Fix final summary appearing in "thinking" box
+  - Backend `webv.py`: Implemented a fallback to ensure at least one `assistant_content` event is sent if the AI provides a response, preventing cases where the final answer is only in the `reasoning` stream.
+  - Frontend `webv.html`: Added a safeguard to move content from the reasoning box to the final answer box if the stream ends without any `assistant_content` events, fixing the display for the user.
+  - Impact: The AI's final summary is now always displayed correctly in the main answer area, separate from its thoughts.
+
+- Tool Calling: Enhanced debugging and simplified logic
+  - Backend `webv.py`:
+    - Added console logging to show the original format of any malformed tool calls that are ignored.
+    - Added logging to show every valid inline tool call that is successfully parsed.
+    - Removed the complex and unnecessary tool call deduplication logic.
+  - Impact: Easier to debug AI tool call behavior and a simpler, more direct execution flow.
+
+- Context: Prevent AI from echoing placeholder text
+  - Backend `webv.py`: Removed the `[Your previous response used tools]` placeholder from the conversation history sent to the AI.
+  - Impact: Fixes a UI bug where the AI would mimic this placeholder before making a tool call, cleaning up the chat display.
+
+2025-08-23
+
+- Web: Add `/lastjson` debug command and cache outgoing model payloads
+  - Backend `webv.py`:
+    - Add `last_json_payload` field to the `Session` dataclass to store the most recent JSON payload sent to the model.
+    - Implement a new `/lastjson` command: when the POST `text` is exactly `/lastjson`, the server prints the cached JSON payload to the console and immediately returns without calling any model or modifying session history.
+    - Cache the final JSON payload (`payload`) into `session.last_json_payload` immediately before each OpenRouter API request (stores a JSON-serializable copy with a fallback preview).
+  - Impact: Allows quick server-side inspection of the last model request for debugging without triggering model calls or changing session state.
+
+- Web: Remove hardcoded model names from HTML welcome message
+  - Frontend `webv.html`:
+    - Replaced hardcoded model commands (`/claude`, `/deepseek`, etc.) with "Loading available models..." placeholder.
+    - JavaScript already dynamically fetches models from `/api/models` endpoint and updates welcome message via `updateWelcomeMessage()`.
+  - Impact: Model list in welcome message now automatically reflects the `MODELS` configuration in `webv.py` without requiring HTML updates.
+
+2025-08-24
+
+- AI: Fine-tune model temperature settings
+  - Backend `webv.py`:
+    - Applied Qwen-specific temperature/sampling parameters to `qwent`.
+    - Set `kimi` temperature to 0.6.
+    - Set `deepseek` temperature to 0.0 for deterministic output.
+
+- ConsAI: Fix function-call tool format for multi-line commands
+  - Backend `consai.py`:
+    - Fixed `_parse_inline_tool_calls()` regex pattern to support multi-line commands in `executeshell({"command": "..."})` format.
+    - Changed from single-line anchored pattern to proper JSON parsing with `re.MULTILINE | re.DOTALL`.
+    - Added proper JSON escaping support for commands containing newlines, quotes, and special characters.
+    - Added `_remove_inline_tool_calls()` method to clean function calls from displayed content with `[EXECUTED: ...]` placeholders.
+    - Fixed model name condition from `gpt5chat` to `gptchat` for inline tool call support.
+  - Impact: Multi-line shell commands now work correctly in function-call format instead of breaking at the first newline.
+
+- ConsAI: Fix model confusion about tool call display format
+  - Backend `consai.py`:
+    - Updated system prompt for `deepthink` and `deepchat` models to explicitly clarify the correct tool call format.
+    - Added warning about NOT using `[EXECUTED: ...]` format (which is display-only) vs the correct `executeshell({"command": "..."})` format.
+  - Impact: Models now generate proper executable tool calls instead of display placeholders that don't actually run commands.
+
+- ConsAI: Remove [EXECUTED: ...] display text from tool calls
+  - Backend `consai.py`:
+    - Simplified `_remove_inline_tool_calls()` method to completely remove tool call syntax instead of replacing with display text.
+    - Tool calls now execute cleanly without leaving "[EXECUTED: ...]" artifacts in the conversation.
+  - Impact: Cleaner conversation flow - tool calls execute and show their output without extra display noise.
+
+- ConsAI: Remove [EXECUTED: ...] references from system prompt
+  - Backend `consai.py`:
+    - Removed warning about `[EXECUTED: ...]` format from system prompt for `deepthink` and `deepchat` models.
+    - System prompt now only shows the correct `executeshell({"command": "..."})` format without mentioning the display format.
+  - Impact: Prevents models from learning about the wrong format, reducing confusion and ensuring they only use the correct executable format.
+
+- ConsAI: Add support for wrapped inline tool call format
+  - Backend `consai.py`:
+    - Extended `_parse_inline_tool_calls()` to support the `<｜tool calls begin｜>...<｜tool calls end｜>` wrapper format in addition to the original `executeshell({...})` format.
+    - Added regex patterns to handle both regular spaces and Unicode separator characters (▁) in tool call tags.
+    - Updated `_remove_inline_tool_calls()` to clean both wrapper and original formats from displayed content.
+    - Fixed linter warnings by removing unused imports (`Union`, `cast`) and unused variable (`supports_formal_tools`).
+  - Impact: ConsAI now parses and executes tool calls from models that use the wrapped format, increasing compatibility with different AI providers.
+
+- ConsAI: Add markdown parsing for shell commands
+  - Backend `consai.py`:
+    - Added a fallback to `_parse_inline_tool_calls` to recognize and parse shell commands embedded in markdown code blocks (e.g., ```bash...```) that appear at the end of a model's response.
+    - Updated `_remove_inline_tool_calls` to globally strip these markdown blocks to keep the final output clean.
+  - Impact: Increases robustness by successfully executing commands even when models creatively format them as markdown, preventing silent failures.
+
+- ConsAI: Refine markdown tool parsing logic
+  - Backend `consai.py`:
+    - Updated `_parse_inline_tool_calls` to only recognize a markdown command block if it is at the very end of the message and immediately preceded by a colon (e.g., `Do this:` followed by ```bash...```).
+    - Refined `_remove_inline_tool_calls` to only strip the *specific* markdown block that was identified as a tool call, leaving the preceding colon intact and avoiding the removal of other potential markdown blocks in the response.
+  - Impact: Prevents the model from accidentally triggering commands by using markdown for non-executable examples. The tool-call logic is now more precise and predictable.
+
+- ConsAI: Add temporary user message reminder to prevent assistant prefixes
+  - Backend `consai.py`:
+    - Added injection of a temporary user message in `_call_bot` that reminds the model not to add prefixes like `<[:~ASSISTANTNAME said~:]>` to its responses.
+    - The reminder message is dynamically generated with the current bot's name and appended to the message list before the API call.
+    - This temporary message is not saved to the permanent conversation history.
+  - Impact: Provides a recent, high-priority instruction to models to prevent them from generating unwanted prefixes, working in conjunction with the existing `_strip_said_tags` post-processing safety net.
+
+- ConsAI: Implement persistent reminder injection for prefix violations  
+  - Backend `consai.py`:
+    - Modified reminder injection in `_call_bot` to persist across turns until model produces clean responses
+    - Removed immediate flag reset after injecting reminder
+    - Added logic to clear `needs_prefix_reminder` flag only when assistant response contains no forbidden prefixes
+  - Impact: Reminders continue across multiple turns until violation stops, improving training effectiveness while reducing unnecessary reminders after compliance
+
+- ConsAI: Fix stream cancellation to properly close HTTP requests
+  - Backend `consai.py`:
+    - Added `response.close()` call when `interrupt_event` is set during API response streaming
+    - Previously only broke out of streaming loop, leaving HTTP request active in background
+  - Impact: Ctrl+C now immediately terminates the API call instead of letting it continue consuming resources
+
+2025-10-05
+
+- ConsAI: Refactor to use LangChain framework
+  - Created `langc_langchain.py` as refactored version using LangChain
+  - Implementation details:
+    - Created `ChatOpenRouter` custom chat model extending `BaseChatModel`
+    - Implemented `_generate()` for non-streaming and `_stream()` for streaming
+    - Converted conversation history from dicts to LangChain message types:
+      - `HumanMessage` for user input
+      - `AIMessage` for assistant responses
+      - `SystemMessage` for system prompts
+      - `ToolMessage` for tool execution results
+    - All custom metadata (bot_id, usage, applypatch_failed) moved to `additional_kwargs`
+    - Preserved ALL existing functionality:
+      - Multi-model support (all 15 models)
+      - Shell execution with PTY support
+      - Security validation and approval prompts
+      - Direct shell mode with `>` prefix
+      - Special commands (/clear, /stats, /lastjson, /revert, /ask)
+      - Bot addressing (/claude, /gemini, etc.)
+      - Multi-line input (BEGIN...END)
+      - Interrupt handling (Ctrl-C)
+      - Terminal colors and beeps
+      - Cost and token tracking
+      - Inline tool call parsing (all 3 formats)
+      - Applypatch with failure detection
+  - Dependencies added to `requirements.txt`:
+    - langchain-core>=0.3.0
+    - langchain>=0.3.0
+    - langchain-openai>=0.2.0
+  - Documentation:
+    - Created `LANGCHAIN_MIGRATION.md` with full migration guide
+    - Created `LANGCHAIN_QUICK_REFERENCE.md` with code comparisons
+    - Includes testing checklist and troubleshooting guide
+  - Impact: Modernizes codebase with standard LangChain interfaces while maintaining 100% backward compatibility. Enables future integration with LangChain ecosystem (LangSmith, chains, agents, vector stores)
+
+2025-12-29
+
+- ConsAI: Add basic image (vision) input support
+  - Backend `consai.py`:
+    - Added `/img <path-or-url> [...]` to attach one or more images to the next prompt
+    - Added `/imgclear` to clear pending image attachments
+    - Local image files are sent as `data:image/*;base64,...` URLs using OpenAI-style multimodal message content
+
+2026-01-15
+
+- ConsAI: Inject `AGENTS.md` instructions into system prompt
+  - Backend `consai.py`:
+    - Modified `_get_system_prompt` to read instructions from `~/src/AGENTS.md` and `./AGENTS.md` (if they exist) on every request.
+    - Updated local variable identifiers in `_get_system_prompt` to be lowercase without underscores (e.g., `assistantname`, `agentrules`) to comply with user rules.
+  - Impact: The AI agent now automatically follows rules defined in `AGENTS.md` files, and these rules can be updated dynamically without restarting the agent.

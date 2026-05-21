@@ -1,0 +1,10 @@
+prompt_toolkit
+python-dotenv
+requests
+fastapi
+uvicorn[standard]
+httpx
+langchain-core
+langchain
+langchain-openai
+openai
