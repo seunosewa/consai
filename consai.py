@@ -19,9 +19,6 @@ import pty
 import string
 
 from dotenv import load_dotenv
-
-PATCHCMD = 'python ' + shlex.quote(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'applypatch.py'))
 from threading import Event
 from typing import Dict, List, Optional, Callable
 
@@ -33,34 +30,37 @@ from prompt_toolkit.history import FileHistory
 
 MODELS = {
     # Claude
-    'opus46':   {'name': 'anthropic/claude-opus-4.6', 'provider': 'openrouter', 'reasoning': 'medium'},
-    'opus55':   {'name': 'anthropic/claude-opus-5.5', 'provider': 'openrouter', 'reasoning': 'medium'},
-    'sonnet55': {'name': 'anthropic/claude-sonnet-5.5', 'provider': 'openrouter', 'reasoning': 32768},
-    'sonnet46': {'name': 'anthropic/claude-sonnet-4.6', 'provider': 'openrouter', 'reasoning': 32768},
-    'haiku':    {'name': 'anthropic/claude-haiku-4.5', 'provider': 'openrouter', 'reasoning': 32768},
+    'sonnet46': {'name': 'anthropic/claude-sonnet-4.6', 'reasoning': 32768},
+    'sonnet55': {'name': 'anthropic/claude-sonnet-5.5', 'reasoning': 32768},
+    'opus46':   {'name': 'anthropic/claude-opus-4.6', 'reasoning': 'medium'},
+    'opus55':   {'name': 'anthropic/claude-opus-5.5', 'reasoning': 'medium'},
 
     # GPT
-    'gpt54':      {'name': 'openai/gpt-5.4', 'provider': 'openrouter', 'reasoning': 'medium'},
-    'gpt54mini':  {'name': 'openai/gpt-5.4-mini', 'provider': 'openrouter', 'reasoning': 'high'},
-    'gpt53codex': {'name': 'openai/gpt-5.3-codex', 'provider': 'openrouter', 'reasoning': 'medium'},
-    'oss':        {'name': 'openai/gpt-oss-120b', 'provider': 'openrouter', 'reasoning': 'high'},
+    'astra':      {'name': 'openai/gpt-astra-latest', 'reasoning': 'high'},
+    'sol':        {'name': 'openai/gpt-sol-latest', 'reasoning': 'high'},
 
     # Gemini
-    '31pro':  {'name': 'google/gemini-3.1-pro-preview', 'provider': 'openrouter', 'reasoning': 'medium'},
-    '38flash':{'name': 'google/gemini-3.8-flash','provider': 'openrouter', 'reasoning': 'high'},
+    '31pro':   {'name': 'google/gemini-3.1-pro-preview', 'reasoning': 'medium'},
+    '38flash': {'name': 'google/gemini-3.8-flash', 'reasoning': 'high'},
 
     # GLM
-    'glm53': {'name': 'z-ai/glm-5.3', 'provider': 'openrouter', 'reasoning': 32768},
+    'glmflash':  {'name': 'z-ai/glm-flash-latest', 'reasoning': 'high'},
+    'glm': {'name': 'z-ai/glm-latest', 'reasoning': 'high'},
 
     # Kimi
-    'k26': {'name': 'moonshotai/kimi-k3', 'provider': 'openrouter', 'reasoning': 'high'},
-
-    # Minimax
-    'm25': {'name': 'minimax/minimax-m2.5', 'provider': 'openrouter', 'reasoning': 'high'},
-    'm27': {'name': 'minimax/minimax-m2.7', 'provider': 'openrouter', 'reasoning': 'high'},
+    'kimi': {'name': '~moonshotai/kimi-latest', 'reasoning': 'high'},
 
     # Qwen
-    'qwen36': {'name': 'qwen/qwen3.6-plus', 'provider': 'openrouter', 'reasoning': 'high'},
+    'qwenflash': {'name': 'qwen/qwen3.8-flash', 'reasoning': 'high'},
+    'qwenmax':   {'name': 'qwen/qwen3.8-max-0902', 'reasoning': 'high'},
+
+    # DeepSeek
+    'deepseekpro':   {'name': 'deepseek/deepseek-pro-latest', 'reasoning': 'high'},
+    'deepseekflash': {'name': 'deepseek/deepseek-flash-latest', 'reasoning': 'high'},
+
+    # MiMo
+    'mimopro':   {'name': 'xiaomi/mimo-v2.6-pro', 'reasoning': 'high'},
+    'mimoflash': {'name': 'xiaomi/mimo-v2.6-flash', 'reasoning': 'high'},
 }
 
 # ANSI color codes
@@ -524,7 +524,6 @@ Use google to search the web:
 All backup files or temporary scripts should go into {tempdir}.
 Open and read files before mentioning them. Never guess what they contain. Always read them.
 Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.system()}
-{APPLYPATCH.replace('PATCHCMD', PATCHCMD)}
 ''' if bot_name not in ("gpt5c",) else 'You do not have any tools. Ask user for help instead.\n'
 
         conclusion = '''
@@ -583,10 +582,9 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
         for bot in MODELS:
             # Match /bot followed by end of string, whitespace, or punctuation
             pattern = rf'/{re.escape(bot)}(?=\s|$|[^\w])'
-            if re.search(pattern, user_text):
-                bot_commands.append(bot)
-        for bot in bot_commands:
-            user_text = user_text.replace(f'/{bot}', f'<[:~@{bot.upper()}:]>').strip()
+            user_text, count = re.subn(
+                pattern, f'<[:~@{bot.upper()}:]>', user_text)
+            if count: bot_commands.append(bot)
 
         return user_text, bot_commands, ask_mode
 
@@ -595,13 +593,6 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
         """Prepares the message list for the API call."""
         system_prompt = {'role': 'system', 'content': self._get_system_prompt(bot_name, ask_mode)}
         
-        # Determine if last conversation entry was a failed applypatch tool call
-        applypatch_failed_last = False
-        if self.conversation_history:
-            last_original_msg = self.conversation_history[-1]
-            if last_original_msg.get('role') == 'tool' and last_original_msg.get('applypatch_failed'):
-                applypatch_failed_last = True
-
         # Format conversation history to show bot identities
         formatted_history = []
         for msg in self.conversation_history:
@@ -624,8 +615,6 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
                     formatted_msg['tool_calls'] = sanitized_tool_calls
             else:
                 formatted_msg = msg.copy()
-                if formatted_msg.get('role') == 'tool':
-                    formatted_msg.pop('applypatch_failed', None)
             
             # Add reasoning_details for Gemini thinking models if they exist.
             if (bot_name in ('3pro', '35flash', '3flash')
@@ -637,10 +626,7 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
                 
             formatted_history.append(formatted_msg)
 
-        # If the last conversation entry was a failed applypatch tool call, add helper message temporarily
         reminders = []
-        if applypatch_failed_last:
-            reminders.append('Your applypatch failed. read patcherrors.txt for help, and craft a perfect patch this time.')
         if self.needs_prefix_reminder:
             reminders.append(f"Never add prefixes like <[:~{bot_name.upper()} said~:]> to your answers)")
         if reminders:
@@ -1161,10 +1147,6 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
                         # If nothing was streamed (e.g. early cancel), print the content now
                         if not streamed_any and output:
                             print(f'{tool_message["content"]}', end='')
-                        if (command and 'applypatch' in command and
-                            output and not output.strip().startswith('Done!') and
-                            not output.strip() == ''):
-                            tool_message['applypatch_failed'] = True
                         self.conversation_history.append(tool_message)
                     else:
                         error_msg = "Error: Tool call missing 'command' argument"
@@ -1603,8 +1585,9 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
                     'sort': 'latency',
                     'ignore': ['deepinfra/fp4', 'baseten/fp4'],
                     'order': ['openai', 'anthropic', 'z-ai', 'alibaba', 'xai',
-                              'moonshotai', 'minimax/fp8', 'google-ai-studio',
-                              'google-vertex', 'parasail/bf16', 'parasail',
+                              'moonshotai', 'minimax/fp8', 'xiaomi/fp8',
+                              'google-ai-studio', 'google-vertex',
+                              'parasail/bf16', 'parasail',
                               'fireworks', 'deepinfra/bf16', 'novita', 'novita/fp8',
                               'stealth', 'deepseek', 'atlas-cloud/fp8', 'siliconflow/fp8'],
                     'allow_fallbacks': False
@@ -2089,87 +2072,6 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
             self.always_approve = False
 
         print('\nGoodbye!')
-
-APPLYPATCH = '''### applypatch command instructions
-Use the `PATCHCMD` shell command to edit files.
-Your patch language is a stripped‑down, file‑oriented diff format designed to be easy to parse and safe to apply. You can think of it as a high‑level envelope:
-
-*** Begin Patch
-[ one or more file sections ]
-*** End Patch
-
-Within that envelope, you get a sequence of file operations.
-You MUST include a header to specify the action you are taking.
-Each operation starts with one of three headers:
-
-*** Add File: <path> - create a new file. Every following line is a + line (the initial contents).
-*** Delete File: <path> - remove an existing file. Nothing follows.
-*** Update File: <path> - patch an existing file in place (optionally with a rename).
-
-May be immediately followed by *** Move to: <new path> if you want to rename the file.
-Then one or more "hunks", each introduced by @@ (optionally followed by a hunk header).
-Within a hunk each line starts with:
-
-For instructions on [context_before] and [context_after]:
-- By default, show 3 lines of code immediately above and 3 lines immediately below each change. If a change is within 3 lines of a previous change, do NOT duplicate the first change's [context_after] lines in the second change's [context_before] lines.
-- If 3 lines of context is insufficient to uniquely identify the snippet of code within the file, use the @@ operator to indicate the class or function to which the snippet belongs. For instance, we might have:
-@@ class BaseClass
-[3 lines of pre-context]
-- [old_code]
-+ [new_code]
-[3 lines of post-context]
-
-- If a code block is repeated so many times in a class or function such that even a single `@@` statement and 3 lines of context cannot uniquely identify the snippet of code, you can use multiple `@@` statements to jump to the right context. For instance:
-
-@@ class BaseClass
-@@ 	 def method():
-[3 lines of pre-context]
-- [old_code]
-+ [new_code]
-[3 lines of post-context]
-
-The full grammar definition is below:
-Patch := Begin { FileOp } End
-Begin := "*** Begin Patch" NEWLINE
-End := "*** End Patch" NEWLINE
-FileOp := AddFile | DeleteFile | UpdateFile
-AddFile := "*** Add File: " path NEWLINE { "+" line NEWLINE }
-DeleteFile := "*** Delete File: " path NEWLINE
-UpdateFile := "*** Update File: " path NEWLINE [ MoveTo ] { Hunk }
-MoveTo := "*** Move to: " newPath NEWLINE
-Hunk := "@@" [ header ] NEWLINE { HunkLine } [ "*** End of File" NEWLINE ]
-HunkLine := (" " | "-" | "+") text NEWLINE
-
-A full patch can combine several operations:
-
-*** Begin Patch
-*** Add File: hello.txt
-+Hello world
-*** Update File: src/app.py
-*** Move to: src/main.py
-@@ def greet():
--print("Hi")
-+print("Hello, world!")
-*** Delete File: obsolete.txt
-*** End Patch
-
-It is important to remember:
-
-- You must include a header with your intended action (Add/Delete/Update)
-- You must prefix new lines with `+` even when creating a new file
-- File references can only be relative, NEVER ABSOLUTE.
-
-You can invoke applypatch like:
-
-```bash
-PATCHCMD << 'EOF'
-*** Begin Patch
-*** Add File: hello.txt
-+Hello, world!
-*** End Patch
-EOF
-```
-'''
 
 if __name__ == '__main__':
     app = CommandLineAIChat()
