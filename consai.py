@@ -1,5 +1,6 @@
 import json
 import base64
+import difflib
 import os
 import platform
 import re
@@ -30,37 +31,35 @@ from prompt_toolkit.history import FileHistory
 
 MODELS = {
     # Claude
-    'sonnet46': {'name': 'anthropic/claude-sonnet-4.6', 'reasoning': 32768},
-    'sonnet55': {'name': 'anthropic/claude-sonnet-5.5', 'reasoning': 32768},
-    'opus46':   {'name': 'anthropic/claude-opus-4.6', 'reasoning': 'medium'},
-    'opus55':   {'name': 'anthropic/claude-opus-5.5', 'reasoning': 'medium'},
+    'sonnet': {'name': '~anthropic/claude-sonnet-latest', 'reasoning': 'medium'},
+    'opus':   {'name': '~anthropic/claude-opus-latest', 'reasoning': 'medium'},
+    'fable':   {'name': '~anthropic/claude-fable-latest', 'reasoning': 'medium'},
 
     # GPT
-    'astra':      {'name': 'openai/gpt-astra-latest', 'reasoning': 'high'},
-    'sol':        {'name': 'openai/gpt-sol-latest', 'reasoning': 'high'},
+    'astra':      {'name': '~openai/gpt-astra-latest', 'reasoning': 'medium'},
+    'sol':        {'name': '~openai/gpt-sol-latest', 'reasoning': 'medium'},
 
     # Gemini
-    '31pro':   {'name': 'google/gemini-3.1-pro-preview', 'reasoning': 'medium'},
-    '38flash': {'name': 'google/gemini-3.8-flash', 'reasoning': 'high'},
+    '31pro':   {'name': '~google/gemini-pro-latest', 'reasoning': 'medium'},
+    '38flash': {'name': '~google/gemini-flash-latest', 'reasoning': 'medium'},
 
     # GLM
-    'glmflash':  {'name': 'z-ai/glm-flash-latest', 'reasoning': 'high'},
-    'glm': {'name': 'z-ai/glm-latest', 'reasoning': 'high'},
+    'glmflash':  {'name': '~z-ai/glm-flash-latest', 'reasoning': 'medium'},
+    'glm': {'name': '~z-ai/glm-latest', 'reasoning': 'medium'},
 
     # Kimi
-    'kimi': {'name': '~moonshotai/kimi-latest', 'reasoning': 'high'},
-
+    'kimi': {'name': '~moonshotai/kimi-latest', 'reasoning': 'medium'},
     # Qwen
-    'qwenflash': {'name': 'qwen/qwen3.8-flash', 'reasoning': 'high'},
-    'qwenmax':   {'name': 'qwen/qwen3.8-max-0902', 'reasoning': 'high'},
+    'qwenflash': {'name': 'qwen/qwen3.8-flash', 'reasoning': 'medium'},
+    'qwenmax':   {'name': 'qwen/qwen3.8-max-0902', 'reasoning': 'medium'},
 
     # DeepSeek
-    'deepseekpro':   {'name': 'deepseek/deepseek-pro-latest', 'reasoning': 'high'},
-    'deepseekflash': {'name': 'deepseek/deepseek-flash-latest', 'reasoning': 'high'},
+    'deepseekpro':   {'name': '~deepseek/deepseek-pro-latest', 'reasoning': 'medium'},
+    'deepseekflash': {'name': '~deepseek/deepseek-flash-latest', 'reasoning': 'medium'},
 
     # MiMo
-    'mimopro':   {'name': 'xiaomi/mimo-v2.6-pro', 'reasoning': 'high'},
-    'mimoflash': {'name': 'xiaomi/mimo-v2.6-flash', 'reasoning': 'high'},
+    'mimopro':   {'name': 'xiaomi/mimo-v2.6-pro', 'reasoning': 'medium'},
+    'mimoflash': {'name': 'xiaomi/mimo-v2.6-flash', 'reasoning': 'medium'},
 }
 
 # ANSI color codes
@@ -382,7 +381,7 @@ class CommandLineAIChat:
         self.client = None
         self.conversation_history: List[Dict[str, str]] = []
         self.needs_prefix_reminder = False
-        self.last_bot_name = 'sonnet46'
+        self.last_bot_name = 'sonnet'
         self.retry_delays = [1.5]
         self.interrupt_event = Event()
         self.bot_running = False
@@ -413,6 +412,25 @@ class CommandLineAIChat:
                         'command': {'type': 'string', 'description': 'The shell command to execute.'},
                     },
                     'required': ['command']
+                }
+            }
+        }
+        self.edittool = {
+            'type': 'function',
+            'function': {
+                'name': 'Edit',
+                'description': 'Performs exact string replacement in a file. '
+                               'old_string must match the file exactly, including indentation, and be unique, or the edit fails. '
+                               'replace_all: true replaces every occurrence instead.',
+                'parameters': {
+                    'type': 'object',
+                    'properties': {
+                        'file_path': {'type': 'string', 'description': 'The absolute path to the file to modify'},
+                        'old_string': {'type': 'string', 'description': 'The text to replace'},
+                        'new_string': {'type': 'string', 'description': 'The text to replace it with (must be different from old_string)'},
+                        'replace_all': {'type': 'boolean', 'description': 'Replace all occurrences of old_string (default false)'},
+                    },
+                    'required': ['file_path', 'old_string', 'new_string']
                 }
             }
         }
@@ -517,6 +535,7 @@ You are in a chatroom with User and OTHER helpful AI assistants: {otherbotsinfo}
 Try your best to run shell commands in non-interactive mode e.g. `echo "command to run" | script`
 Think creatively about how to chain simple shell commands to solve any problem. Long command chains are BEST.
 Break complex tasks down into multiple tool calls if needed.
+Use your Edit tool to change existing files. Create new files with the shell.
 
 Use google to search the web:
 `curl "https://www.googleapis.com/customsearch/v1?key={googleapikey}&cx={googlecseid}&q=YOUR_QUERY" | jq '[.items[] | {{title, link, snippet}}]'`
@@ -660,6 +679,62 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
         except Exception:
             return (text or '').strip().lower()
 
+    def _approve(self, question: str) -> bool:
+        """Asks Yes / No / Always. Any answer but Yes or Always sets the interrupt flag."""
+        if self.always_approve: return True
+        try:
+            self._play_completion_beep()  # Beep when asking for permission
+            print(f'{Colors.RED}{question} (Yes / No / Always) {Colors.RESET}', end='', flush=True)
+            response = get_single_key()
+        except (EOFError, KeyboardInterrupt): response = None
+        if response in ('y', 'Y', 'enter'):
+            print('Yes')
+            return True
+        if response in ('a', 'A'):
+            print('Always')
+            self.always_approve = True
+            return True
+        if response in ('n', 'N', 'escape'): print('No')
+        self.interrupt_event.set()
+        return False
+
+    def _printdiff(self, path: str, old: str, new: str) -> None:
+        """Prints a coloured diff. Line endings are kept so newline-only changes show."""
+        split = lambda s: re.findall(r'[^\n]*\n|[^\n]+', s)
+        for line in difflib.unified_diff(split(old), split(new), path, path):
+            color = Colors.GREEN if line[:1] == '+' else Colors.RED if line[:1] == '-' else Colors.GREY
+            shown = line.rstrip('\n').replace('\r', '\\r')
+            if not line.endswith('\n'): shown += '\n\\ No newline at end of file'
+            print(f'{color}{shown}{Colors.RESET}')
+
+    def _editfile(self, path, old, new, replaceall: bool = False) -> str:
+        """Exact string replacement, as in Claude's Edit tool. Returns the tool result text."""
+        if not path or not isinstance(old, str) or not isinstance(new, str):
+            return 'Error: file_path, old_string and new_string are required.'
+        if not old: return 'Error: old_string is empty.'
+        if old == new: return 'Error: old_string and new_string are identical.'
+        path = os.path.realpath(os.path.expanduser(path))
+        if not os.path.isfile(path): return f'Error: file not found: {path}'
+        try:
+            with open(path, encoding='utf-8', newline='') as f: text = f.read()
+        except (OSError, UnicodeDecodeError) as e: return f'Error reading {path}: {e}'
+        n = text.count(old)
+        if n == 0: return 'Error: old_string not found. Re-read the file and retry.'
+        if n > 1 and not replaceall:
+            return f'Error: found {n} matches. Add context or set replace_all.'
+        newtext = text.replace(old, new)
+        self._printdiff(path, text, newtext)
+        if not self._approve('Apply this edit?'): return 'Edit cancelled by user.'
+        # The file may have been saved elsewhere while the prompt was open
+        try:
+            with open(path, encoding='utf-8', newline='') as f: changed = f.read() != text
+        except (OSError, UnicodeDecodeError): changed = True
+        if changed: return 'Error: file changed on disk during approval. Nothing written. Re-read it and retry.'
+        try:
+            with open(path, 'w', encoding='utf-8', newline='') as f: f.write(newtext)
+        except OSError as e: return f'Error writing {path}: {e}'
+        return f'Edited {path}: replaced {n} occurrence(s).'
+
     def _executeshell_command(self, command: str, on_chunk: Optional[Callable[[str], None]] = None, require_approval: bool = True, echo_command: bool = True) -> str:
         """Executes a shell command after checking if it's safe.
 
@@ -672,29 +747,9 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
         """
         if echo_command:
             print(f'\n{Colors.YELLOW}{command}{Colors.RESET}')
-        if require_approval and not command_is_readonly(command) and not self.always_approve:
-            try:
-                self._play_completion_beep()  # Beep when asking for permission
-                print(f'{Colors.RED}Run this command? (Yes / No / Always) {Colors.RESET}', end='', flush=True)
-                response = get_single_key()
-                
-                if response in ('y', 'Y', 'enter'):
-                    print('Yes')
-                elif response in ('a', 'A'):
-                    print('Always')
-                    self.always_approve = True
-                elif response in ('n', 'N', 'escape'):
-                    print('No')
-                    self.interrupt_event.set()
-                    return 'Command execution cancelled by user.'
-                else:
-                    # Any other key means no
-                    self.interrupt_event.set()
-                    return 'Command execution cancelled by user.'
-            except (EOFError, KeyboardInterrupt):
-                self.interrupt_event.set()
-                return 'Command execution cancelled by user.'
-        
+        if require_approval and not command_is_readonly(command) and not self._approve('Run this command?'):
+            return 'Command execution cancelled by user.'
+
         # Always attempt interactive PTY mode: allocate a TTY and forward keystrokes + output
         try:
             if sys.stdin.isatty():
@@ -706,8 +761,11 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
                         on_chunk(preface)
                     except Exception:
                         pass
-                # Wrap with script to force a pseudo-tty for better output behavior
-                command = f'script -q /dev/null -c {shlex.quote(command)}'
+                # -e makes script return the child's exit status
+                quoted = shlex.quote(command)
+                if platform.system() == 'Darwin':
+                    command = f'script -qe /dev/null /bin/sh -c {quoted}'
+                else: command = f'script -qe /dev/null -c {quoted}'
         except Exception:
             # If any TTY checks fail, continue below with non-interactive path
             pass
@@ -828,7 +886,7 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
             traceback.print_exc()
             return f'Error executing command: {e}'
 
-    def _change_directory(self, target: Optional[str], on_chunk: Optional[Callable[[str], None]] = None) -> (bool, str):
+    def _change_directory(self, target: Optional[str], on_chunk: Optional[Callable[[str], None]] = None) -> tuple[bool, str]:
         """Change current working directory in-process. Returns (success, transcript)."""
         old_cwd = os.getcwd()
         try:
@@ -1166,6 +1224,19 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
                     }
                     print(f"{Colors.RED}{tool_message['content']}{Colors.RESET}")
                     self.conversation_history.append(tool_message)
+            elif tool_name == 'Edit':
+                args = tool_call.get('args') or {}
+                try:
+                    output = self._editfile(args.get('file_path'), args.get('old_string'),
+                                            args.get('new_string'), args.get('replace_all') is True)
+                except Exception as e: output = f'Error processing Edit: {e}'
+                color = Colors.RED if output.startswith('Error') else Colors.GREEN
+                print(f'{color}{output}{Colors.RESET}')
+                self.conversation_history.append({
+                    'role': 'tool',
+                    'tool_call_id': _sanitize_tool_id(tool_call['id']),
+                    'content': output
+                })
             else:
                 print(f"{Colors.RED}Unknown tool: {tool_name}{Colors.RESET}")
                 tool_message = {
@@ -1603,7 +1674,7 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
                 payload['repetition_penalty'] = 1.05
 
             if include_tools and model_key not in ('gpt5c',):
-                payload['tools'] = [self.shell_tool_definition]
+                payload['tools'] = [self.shell_tool_definition, self.edittool]
                 payload['tool_choice'] = 'auto'
 
             if model_key == 'kimi':
@@ -1825,7 +1896,8 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
                     unique_tool_calls = []
                     for tc in all_tool_calls:
                         command = tc.get('args', {}).get('command')
-                        if command and command not in seen_commands:
+                        if tc.get('name') != 'executeshell': unique_tool_calls.append(tc)
+                        elif command and command not in seen_commands:
                             unique_tool_calls.append(tc)
                             seen_commands.add(command)
                     all_tool_calls = unique_tool_calls
