@@ -1,13 +1,5 @@
-rust/target
-ts/node_modules
-ts/dist
-Cargo.lock
 __pycache__
-prompter.py
-go/.DS_Store
-rust/.DS_Store
 .DS_Store
-java/target
-cpp/build
 .env
 *.wav
+.vscode/

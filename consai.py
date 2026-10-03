@@ -19,6 +19,9 @@ import pty
 import string
 
 from dotenv import load_dotenv
+
+PATCHCMD = 'python ' + shlex.quote(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'applypatch.py'))
 from threading import Event
 from typing import Dict, List, Optional, Callable
 
@@ -31,8 +34,8 @@ from prompt_toolkit.history import FileHistory
 MODELS = {
     # Claude
     'opus46':   {'name': 'anthropic/claude-opus-4.6', 'provider': 'openrouter', 'reasoning': 'medium'},
-    'opus45':   {'name': 'anthropic/claude-opus-4.5', 'provider': 'openrouter', 'reasoning': 'medium'},
-    'sonnet45': {'name': 'anthropic/claude-sonnet-4.5', 'provider': 'openrouter', 'reasoning': 32768},
+    'opus55':   {'name': 'anthropic/claude-opus-5.5', 'provider': 'openrouter', 'reasoning': 'medium'},
+    'sonnet55': {'name': 'anthropic/claude-sonnet-5.5', 'provider': 'openrouter', 'reasoning': 32768},
     'sonnet46': {'name': 'anthropic/claude-sonnet-4.6', 'provider': 'openrouter', 'reasoning': 32768},
     'haiku':    {'name': 'anthropic/claude-haiku-4.5', 'provider': 'openrouter', 'reasoning': 32768},
 
@@ -43,38 +46,21 @@ MODELS = {
     'oss':        {'name': 'openai/gpt-oss-120b', 'provider': 'openrouter', 'reasoning': 'high'},
 
     # Gemini
-    '25pro':  {'name': 'google/gemini-2.5-pro', 'provider': 'openrouter', 'reasoning': 16384},
-    '25flash':{'name': 'google/gemini-2.5-flash-preview-09-2025', 'provider': 'openrouter', 'reasoning': 24576},
-    '3pro':   {'name': 'google/gemini-3-pro-preview', 'provider': 'openrouter', 'reasoning': 'medium'},
     '31pro':  {'name': 'google/gemini-3.1-pro-preview', 'provider': 'openrouter', 'reasoning': 'medium'},
-    '3flash': {'name': 'google/gemini-3-flash-preview', 'provider': 'openrouter', 'reasoning': 'high'},
+    '38flash':{'name': 'google/gemini-3.8-flash','provider': 'openrouter', 'reasoning': 'high'},
 
     # GLM
-    'glm5': {'name': 'z-ai/glm-5.1', 'provider': 'openrouter', 'reasoning': 32768},
+    'glm53': {'name': 'z-ai/glm-5.3', 'provider': 'openrouter', 'reasoning': 32768},
 
     # Kimi
-    'k25': {'name': 'moonshotai/kimi-k2.5', 'provider': 'openrouter', 'reasoning': 'high'},
-    'k26': {'name': 'moonshotai/kimi-k2.6', 'provider': 'openrouter', 'reasoning': 'high'},
+    'k26': {'name': 'moonshotai/kimi-k3', 'provider': 'openrouter', 'reasoning': 'high'},
 
     # Minimax
     'm25': {'name': 'minimax/minimax-m2.5', 'provider': 'openrouter', 'reasoning': 'high'},
     'm27': {'name': 'minimax/minimax-m2.7', 'provider': 'openrouter', 'reasoning': 'high'},
 
-    # Gemma4
-    'gemma431': {'name': 'google/gemma-4-31b-it', 'provider': 'openrouter', 'reasoning': 'high'},
-    'gemma426': {'name': 'google/gemma-4-26b-a4b-it', 'provider': 'openrouter', 'reasoning': 'high'},
-
     # Qwen
     'qwen36': {'name': 'qwen/qwen3.6-plus', 'provider': 'openrouter', 'reasoning': 'high'},
-
-    # Ollama (local)
-    'qwen3.6:35b':     {'name': 'qwen3.6:35b', 'provider': 'ollama'},
-    'gemma4:31b':      {'name': 'gemma4:31b', 'provider': 'ollama'},
-    'qwen3.5:35b':     {'name': 'qwen3.5:35b', 'provider': 'ollama'},
-    'gemma4:26b':      {'name': 'gemma4:26b', 'provider': 'ollama'},
-    'gpt-oss:20b':     {'name': 'gpt-oss:20b', 'provider': 'ollama'},
-    'gemma4:latest':   {'name': 'gemma4:latest', 'provider': 'ollama'},
-    'qwen3-coder:30b': {'name': 'qwen3-coder:30b', 'provider': 'ollama'},
 }
 
 # ANSI color codes
@@ -434,10 +420,9 @@ class CommandLineAIChat:
         self._setup_signal_handlers()
 
     def _initialize_client(self):
-        """Initializes OpenRouter and Ollama REST configuration."""
+        """Initializes OpenRouter REST configuration."""
         self.openrouter_api_key = os.getenv('OPENROUTER_API_KEY')
         self.api_url = 'https://openrouter.ai/api/v1/chat/completions'
-        self.ollama_base_url = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434/v1/chat/completions')
 
     def _setup_signal_handlers(self):
         """Sets up signal handlers for ctrl-c and ctrl-d behavior."""
@@ -539,7 +524,7 @@ Use google to search the web:
 All backup files or temporary scripts should go into {tempdir}.
 Open and read files before mentioning them. Never guess what they contain. Always read them.
 Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.system()}
-{APPLYPATCH}
+{APPLYPATCH.replace('PATCHCMD', PATCHCMD)}
 ''' if bot_name not in ("gpt5c",) else 'You do not have any tools. Ask user for help instead.\n'
 
         conclusion = '''
@@ -642,8 +627,9 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
                 if formatted_msg.get('role') == 'tool':
                     formatted_msg.pop('applypatch_failed', None)
             
-            # Add reasoning_details if target is Gemini 3 Pro and they exist in history
-            if bot_name in ('3pro', '3flash') and 'reasoning_details' in msg:
+            # Add reasoning_details for Gemini thinking models if they exist.
+            if (bot_name in ('3pro', '35flash', '3flash')
+                    and 'reasoning_details' in msg):
                 formatted_msg['reasoning_details'] = msg['reasoning_details']
             elif 'reasoning_details' in formatted_msg:
                 # Ensure we don't leak reasoning to other models if it was copied
@@ -1080,9 +1066,7 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
             'usage': usage
         })
 
-        provider = MODELS.get(bot_name, {}).get('provider', 'openrouter')
-        local_tag = " (local)" if provider == 'ollama' else ""
-        print(f"\n{Colors.CYAN}Request: ${cost:.4f}{local_tag} ({prompt_tokens} up, {completion_tokens} down) | Session: ${self.session_cost:.4f} ({self.session_prompt_tokens} up, {self.session_completion_tokens} down){Colors.RESET}")
+        print(f"\n{Colors.CYAN}Request: ${cost:.4f} ({prompt_tokens} up, {completion_tokens} down) | Session: ${self.session_cost:.4f} ({self.session_prompt_tokens} up, {self.session_completion_tokens} down){Colors.RESET}")
 
     def _print_stats(self):
         print(f"{Colors.BOLD}Session usage{Colors.RESET}")
@@ -1653,26 +1637,6 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
 
             url = self.api_url
 
-        elif provider == 'ollama':
-            headers = {
-                'Content-Type': 'application/json',
-                'Accept': 'text/event-stream'
-            }
-
-            payload = {
-                'model': MODELS[model_key]['name'],
-                'messages': messages,
-                'stream': True,
-                'temperature': 0.6
-            }
-
-            # Include tools for Ollama; the /v1 endpoint ignores them if unsupported
-            if include_tools:
-                payload['tools'] = [self.shell_tool_definition]
-                payload['tool_choice'] = 'auto'
-
-            url = self.ollama_base_url
-
         else:
             raise Exception(f"Unknown provider: {provider}")
 
@@ -1957,41 +1921,14 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
         # Mark bot as no longer running
         self.bot_running = False
 
-    def _list_ollama_models(self):
-        """Query local Ollama server and print installed models."""
-        try:
-            resp = requests.get('http://localhost:11434/api/tags', timeout=5)
-            if resp.status_code != 200:
-                print(f"{Colors.RED}Ollama server returned status {resp.status_code}{Colors.RESET}")
-                return
-            data = resp.json()
-            models = data.get('models', [])
-            if not models:
-                print(f"{Colors.GREY}No Ollama models installed.{Colors.RESET}")
-                return
-            print(f"{Colors.BOLD}Installed Ollama models:{Colors.RESET}")
-            for m in models:
-                name = m.get('name', 'unknown')
-                size_gb = m.get('size', 0) / (1024**3)
-                param = m.get('details', {}).get('parameter_size', '?')
-                quant = m.get('details', {}).get('quantization_level', '?')
-                print(f"  {Colors.GREEN}{name}{Colors.RESET} ({param}, {quant}, {size_gb:.1f}GB)")
-        except requests.exceptions.ConnectionError:
-            print(f"{Colors.RED}Ollama server not running at localhost:11434{Colors.RESET}")
-        except Exception as e:
-            print(f"{Colors.RED}Error listing Ollama models: {e}{Colors.RESET}")
-
     def run(self):
         """Main loop for the interactive chat."""
         openrouter_names = [n for n, m in MODELS.items() if m.get('provider', 'openrouter') == 'openrouter']
-        ollama_names = [n for n, m in MODELS.items() if m.get('provider') == 'ollama']
         or_line = ", ".join([f"{Colors.BLUE}{n.capitalize()}{Colors.RESET}" for n in openrouter_names])
-        ol_line = ", ".join([f"{Colors.GREEN}{n}{Colors.RESET}" for n in ollama_names])
         print(f"{Colors.BOLD}Welcome!{Colors.RESET}")
         print(f"  OpenRouter: {or_line}")
-        print(f"  Ollama:     {ol_line}")
         print("Type 'exit' to quit, or 'BEGIN' to start multi-line input (end with 'END').")
-        print(f"{Colors.GREY}Commands: /clear /stats /lastjson /img /imgclear /ollamas /debate [/mod:bot] <query>{Colors.RESET}")
+        print(f"{Colors.GREY}Commands: /clear /stats /lastjson /img /imgclear /debate [/mod:bot] <query>{Colors.RESET}")
 
         while True:
             user_text = self._get_user_input()
@@ -2045,10 +1982,6 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
 
             if user_text.strip().lower() == '/lastjson':
                 self._print_last_json()
-                continue
-
-            if user_text.strip().lower() == '/ollamas':
-                self._list_ollama_models()
                 continue
 
             # Image attachments: attach one or more images to the *next* prompt.
@@ -2158,7 +2091,7 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
         print('\nGoodbye!')
 
 APPLYPATCH = '''### applypatch command instructions
-Use the `applypatch` shell command to edit files.
+Use the `PATCHCMD` shell command to edit files.
 Your patch language is a stripped‑down, file‑oriented diff format designed to be easy to parse and safe to apply. You can think of it as a high‑level envelope:
 
 *** Begin Patch
@@ -2229,9 +2162,9 @@ It is important to remember:
 You can invoke applypatch like:
 
 ```bash
-applypatch << 'EOF'
-***Begin Patch
-***Add File: hello.txt
+PATCHCMD << 'EOF'
+*** Begin Patch
+*** Add File: hello.txt
 +Hello, world!
 *** End Patch
 EOF
