@@ -20,6 +20,7 @@ import pty
 import string
 
 from dotenv import load_dotenv
+from getpass import getpass
 from threading import Event
 from typing import Dict, List, Optional, Callable
 
@@ -343,7 +344,14 @@ class CommandLineAIChat:
 
     def _initialize_client(self):
         """Initializes OpenRouter REST configuration."""
-        self.openrouter_api_key = os.getenv('OPENROUTER_API_KEY')
+        self.openrouter_api_key = os.getenv('OPENROUTER_API_KEY', '').strip()
+        if not self.openrouter_api_key:
+            try:
+                self.openrouter_api_key = getpass(
+                    'Paste OpenRouter API key (session only): ').strip()
+            except (EOFError, KeyboardInterrupt): raise SystemExit('\nCancelled.')
+            if not self.openrouter_api_key:
+                raise SystemExit('No OpenRouter API key provided.')
         self.api_url = 'https://openrouter.ai/api/v1/chat/completions'
 
     def _setup_signal_handlers(self):
