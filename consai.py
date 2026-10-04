@@ -58,7 +58,7 @@ MODELS = {
 
     # Qwen
     'qwen': {'name': 'qwen/qwen3.8-2.4t-a95b', 'reasoning': 'medium'},
-    'qwen27b': {'name': 'qwen/qwen-3.8-27b', 'reasoning': 'medium'},
+    'qwen27b': {'name': 'qwen/qwen3.8-27b', 'reasoning': 'medium'},
 
     # Gemini
     'geminiflash': {'name': '~google/gemini-flash-latest', 'reasoning': 'medium'},
@@ -413,17 +413,15 @@ class CommandLineAIChat:
         return "\n".join(context_lines) if context_lines else "No relevant context."
 
     def _get_system_prompt(self, bot_name: str, ask_mode: bool = False) -> str:
-        assistantname = bot_name.upper()
         if ask_mode:
-            return f"You are {assistantname}, a helpful AI assistant. Answer the question clearly."
+            return f"You are {bot_name}, a helpful AI assistant. Answer the question clearly."
         
         otherbotsinfo = ", ".join([f"{name}" for name, _ in MODELS.items() if name != bot_name])
 
-        welcome = f'You are a helpful AI assistant.'
         tempdir = '%TEMP%' if platform.system() == 'Windows' else '/tmp'
 
         agentrules = ""
-        for filepath in ['../AGENTS.md', './AGENTS.md']:
+        for filepath in [os.path.abspath(ag) for ag in ['../AGENTS.md', './AGENTS.md']]:
             if os.path.exists(filepath):
                 try:
                     with open(filepath, 'r') as f:
@@ -431,23 +429,19 @@ class CommandLineAIChat:
                 except Exception:
                     pass
 
-        toolinstructions = f'''
-
-Use your Edit tool to change existing files. Create new files with the shell.
+        toolinstructions = f'''Use your Edit tool to change existing files. Create new files with the shell.
 Use your web search tool to search the web. Use your web fetch tool to read a web page.
 All backup files or temporary scripts should go into {tempdir}.
 Open and read files before mentioning them. Never guess what they contain. Always read them.'''
 
-        conclusion = f'''
-
-You are {assistantname}, a helpful AI command-line assistant in the consai.py agent.
+        conclusion = f'''You are {bot_name}, a helpful AI command-line assistant in the consai agent.
 You are in a chatroom with User and OTHER helpful AI assistants: {otherbotsinfo}.
-if you see the <[:~MODELNAME said~:]> prefix in an assistant message, it means that the model MODELNAME said it.
-if you see <[:~@MODELNAME:]> in a user message, it means the user addressed the message to the model MODELNAME.
-Never add <[:~MODELNAME said~:]> or <[:~@MODELNAME:]> to your responses.
+if you see the <[:~modelname said~:]> prefix in an assistant message, it means that the model modelname said it.
+if you see <[:~@modelname:]> in a user message, it means the user addressed the message to the model modelname.
+Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         '''
         environment = f'Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.system()}'
-        r = f'{welcome}\n\n{toolinstructions}{conclusion}{environment}\n\n{agentrules}\n\n'
+        r = f'{toolinstructions}\n\n{conclusion}\n\n{environment}{agentrules}\n\n'
         return r
 
     def _get_user_input(self):
@@ -499,7 +493,7 @@ Never add <[:~MODELNAME said~:]> or <[:~@MODELNAME:]> to your responses.
             # Match /bot followed by end of string, whitespace, or punctuation
             pattern = rf'/{re.escape(bot)}(?=\s|$|[^\w])'
             user_text, count = re.subn(
-                pattern, f'<[:~@{bot.upper()}:]>', user_text)
+                pattern, f'<[:~@{bot}:]>', user_text)
             if count: bot_commands.append(bot)
 
         return user_text, bot_commands, ask_mode
@@ -518,7 +512,7 @@ Never add <[:~MODELNAME said~:]> or <[:~@MODELNAME:]> to your responses.
                 # Handle cases where assistant message might not have content (tool calls only)
                 message_content = _content_to_text(msg.get('content')).strip()
                 # Prepend the new said-tag label instead of "ASSISTANTNAME:"
-                label = f"<[:~{msg['bot_id'].upper()} said~:]>"
+                label = f"<[:~{msg['bot_id']} said~:]>"
                 content = f"{label}\n{message_content}" if message_content else ""
                 formatted_msg = {'role': 'assistant', 'content': content}
                 if 'tool_calls' in msg:
@@ -544,7 +538,7 @@ Never add <[:~MODELNAME said~:]> or <[:~@MODELNAME:]> to your responses.
 
         reminders = []
         if self.needs_prefix_reminder:
-            reminders.append(f"Never add prefixes like <[:~{bot_name.upper()} said~:]> to your answers)")
+            reminders.append(f"Never add prefixes like <[:~{bot_name} said~:]> to your answers)")
         if reminders:
             formatted_history.append({'role': 'system', 'content': '\n'.join(reminders)})
         return [system_prompt] + formatted_history
@@ -1178,7 +1172,7 @@ Never add <[:~MODELNAME said~:]> or <[:~@MODELNAME:]> to your responses.
             f"Other participants: {others}\n\n"
             f"Argue persuasively for your position. Respond to "
             f"previous arguments. Be concise (2-4 paragraphs).\n"
-            f"Never add <[:~{botname.upper()} said~:]> to your "
+            f"Never add <[:~{botname} said~:]> to your "
             f"responses."
         )
 
@@ -1201,7 +1195,7 @@ Never add <[:~MODELNAME said~:]> or <[:~@MODELNAME:]> to your responses.
             f"- Stay neutral. Do not argue for any position.\n"
             f"- Be concise.\n"
             f"{addressline}"
-            f"Never add <[:~{modname.upper()} said~:]> to your responses."
+            f"Never add <[:~{modname} said~:]> to your responses."
         )
 
     def _preparedebatemessages(self, botname, topic, position, allagents, debatehistory, systempromptoverride=None):
@@ -1209,7 +1203,7 @@ Never add <[:~MODELNAME said~:]> or <[:~@MODELNAME:]> to your responses.
         formatted = []
         for msg in debatehistory:
             if msg['role'] == 'assistant' and 'bot_id' in msg:
-                label = f"<[:~{msg['bot_id'].upper()} said~:]>"
+                label = f"<[:~{msg['bot_id']} said~:]>"
                 content = msg.get('content', '')
                 role = 'assistant' if msg['bot_id'] == botname else 'user'
                 formatted.append({'role': role, 'content': f"{label}\n{content}" if content else ''})
@@ -1537,7 +1531,7 @@ Never add <[:~MODELNAME said~:]> or <[:~@MODELNAME:]> to your responses.
             'tool_calls_headers_printed': tool_calls_headers_printed,
         }
 
-    def _prepare_request(self, model_key: str, messages: list):
+    def _prepare_request(self, model_key: str, messages: list, include_tools: bool = True):
         """Prepare URL, headers, and payload for a chat API request."""
         provider = MODELS[model_key].get('provider', 'openrouter')
 
@@ -1574,7 +1568,9 @@ Never add <[:~MODELNAME said~:]> or <[:~@MODELNAME:]> to your responses.
                 },
                 'temperature': 0.6
             }
-
+            if include_tools:
+                payload['tools'] = [self.shell_tool_definition, self.edittool] + WEBTOOLS
+                payload['tool_choice'] = 'auto'
 
             if r := MODELS[model_key].get('reasoning'):
                 if isinstance(r, int):
