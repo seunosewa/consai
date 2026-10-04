@@ -33,15 +33,10 @@ MODELS = {
     # Claude
     'sonnet': {'name': '~anthropic/claude-sonnet-latest', 'reasoning': 'medium'},
     'opus':   {'name': '~anthropic/claude-opus-latest', 'reasoning': 'medium'},
-    'fable':   {'name': '~anthropic/claude-fable-latest', 'reasoning': 'medium'},
 
     # GPT
     'sol':        {'name': '~openai/gpt-sol-latest', 'reasoning': 'medium'},
     'astra':      {'name': '~openai/gpt-astra-latest', 'reasoning': 'medium'},
-
-    # Meta
-    'spark': {'name': 'meta/muse-spark-1.3', 'reasoning': 'medium'},
-    'sparkcontributor': {'name': 'meta/muse-spark-1.3-contributor', 'reasoning': 'medium'},
 
     # Unbiased
     'pareto': {'name': 'unbiased/pareto-26.10-preview'}, # very good for explaining concepts.
@@ -56,14 +51,14 @@ MODELS = {
 
     # Kimi
     'kimi': {'name': '~moonshotai/kimi-latest', 'reasoning': 'medium'},
-
-    # Qwen
-    'qwenflash': {'name': 'qwen/qwen3.8-flash', 'reasoning': 'medium'},
-    'qwenmax':   {'name': 'qwen/qwen3.8-max-0902', 'reasoning': 'medium'},
     
     # MiMo
     'mimoflash': {'name': 'xiaomi/mimo-v2.6-flash', 'reasoning': 'medium'},
     'mimopro':   {'name': 'xiaomi/mimo-v2.6-pro', 'reasoning': 'medium'},
+
+    # Qwen
+    'qwen': {'name': 'qwen/qwen3.8-2.4t-a95b', 'reasoning': 'medium'},
+    'qwen27b': {'name': 'qwen/qwen-3.8-27b', 'reasoning': 'medium'},
 
     # Gemini
     'geminiflash': {'name': '~google/gemini-flash-latest', 'reasoning': 'medium'},
@@ -420,12 +415,11 @@ class CommandLineAIChat:
     def _get_system_prompt(self, bot_name: str, ask_mode: bool = False) -> str:
         assistantname = bot_name.upper()
         if ask_mode:
-            return f"You are {assistantname}, a helpful AI assistant. Use your executeshell tool if needed."
+            return f"You are {assistantname}, a helpful AI assistant. Answer the question clearly."
         
-        otherbotsinfo = ", ".join([f"{name.upper()}" for name, _ in MODELS.items() if name != bot_name])
-        
-        welcome = f'''You are {assistantname}, a helpful AI assistant.
-You are in a chatroom with User and OTHER helpful AI assistants: {otherbotsinfo}.'''
+        otherbotsinfo = ", ".join([f"{name}" for name, _ in MODELS.items() if name != bot_name])
+
+        welcome = f'You are a helpful AI assistant.'
         tempdir = '%TEMP%' if platform.system() == 'Windows' else '/tmp'
 
         agentrules = ""
@@ -438,19 +432,22 @@ You are in a chatroom with User and OTHER helpful AI assistants: {otherbotsinfo}
                     pass
 
         toolinstructions = f'''
+
 Use your Edit tool to change existing files. Create new files with the shell.
 Use your web search tool to search the web. Use your web fetch tool to read a web page.
 All backup files or temporary scripts should go into {tempdir}.
 Open and read files before mentioning them. Never guess what they contain. Always read them.'''
-        
-        
-        conclusion = '''
+
+        conclusion = f'''
+
+You are {assistantname}, a helpful AI command-line assistant in the consai.py agent.
+You are in a chatroom with User and OTHER helpful AI assistants: {otherbotsinfo}.
 if you see the <[:~MODELNAME said~:]> prefix in an assistant message, it means that the model MODELNAME said it.
 if you see <[:~@MODELNAME:]> in a user message, it means the user addressed the message to the model MODELNAME.
 Never add <[:~MODELNAME said~:]> or <[:~@MODELNAME:]> to your responses.
         '''
         environment = f'Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.system()}'
-        r = f'{welcome}\n\n{toolinstructions}\n\n{agentrules}\n\n{conclusion}{environment}'
+        r = f'{welcome}\n\n{toolinstructions}{conclusion}{environment}\n\n{agentrules}\n\n'
         return r
 
     def _get_user_input(self):
@@ -465,7 +462,7 @@ Never add <[:~MODELNAME said~:]> or <[:~@MODELNAME:]> to your responses.
                 self._has_shown_user_label_once = True
             
             # Determine the default text for the prompt
-            default_text = '>' if self.prefill_shell_mode else ''
+            default_text = '!' if self.prefill_shell_mode else ''
 
             # Get user input using the session with an empty message string
             user_text = self.prompt_session.prompt('', default=default_text)
@@ -1540,7 +1537,7 @@ Never add <[:~MODELNAME said~:]> or <[:~@MODELNAME:]> to your responses.
             'tool_calls_headers_printed': tool_calls_headers_printed,
         }
 
-    def _prepare_request(self, model_key: str, messages: list, include_tools: bool = True):
+    def _prepare_request(self, model_key: str, messages: list):
         """Prepare URL, headers, and payload for a chat API request."""
         provider = MODELS[model_key].get('provider', 'openrouter')
 
@@ -1562,33 +1559,22 @@ Never add <[:~MODELNAME said~:]> or <[:~@MODELNAME:]> to your responses.
                 'messages': messages,
                 'stream': True,
                 'provider': {
+                    'zdr': True,
                     'sort': 'latency',
-                    'ignore': ['deepinfra/fp4', 'baseten/fp4'],
-                    'order': ['openai', 'anthropic', 'z-ai', 'alibaba', 'xai',
-                              'moonshotai', 'minimax/fp8', 'xiaomi/fp8',
-                              'google-ai-studio', 'google-vertex',
-                              'parasail/bf16', 'parasail',
-                              'fireworks', 'deepinfra/bf16', 'novita', 'novita/fp8',
-                              'stealth', 'deepseek', 'atlas-cloud/fp8',
-                              'siliconflow/fp8', 'unbiased'],
-                    'allow_fallbacks': False
+                    'order': ['amazon-bedrock', 'google-vertex', # for anthropic
+                              'azure', 'azure/eu', 'azure/us', # for openai
+                              'unbiased', # for pareto
+                              'z-ai', # glm
+                              'together', # deepseek, qwen
+                              'fireworks', # kimi
+                              'novita', # mimo
+                              'deepinfra', # generally fast and cheap
+                    ],
+                    'allow_fallbacks': False,
                 },
                 'temperature': 0.6
             }
 
-            if model_key[:4] == 'qwen':
-                payload['temperature'] = 0.7
-                payload['top_p'] = 0.8
-                payload['top_k'] = 20
-                payload['repetition_penalty'] = 1.05
-
-            if include_tools and model_key not in ('gpt5c',):
-                payload['tools'] = [self.shell_tool_definition, self.edittool] + WEBTOOLS
-                payload['tool_choice'] = 'auto'
-
-            if model_key == 'kimi':
-                payload['temperature'] = 0.6
-                payload['min-p'] = 0.01
 
             if r := MODELS[model_key].get('reasoning'):
                 if isinstance(r, int):
@@ -1888,8 +1874,8 @@ Never add <[:~MODELNAME said~:]> or <[:~@MODELNAME:]> to your responses.
             if user_text is None or user_text.lower() == 'exit':
                 break
 
-            # Direct shell execution path is now determined by the '>' prefix
-            if user_text.strip().startswith('>'):
+            # Direct shell execution path is now determined by the '!' prefix
+            if user_text.strip().startswith('!'):
                 raw_cmd = user_text.strip()[1:].strip()
                 if raw_cmd:
                     # Ensure any prior interrupt is cleared for a fresh command run
@@ -1905,7 +1891,7 @@ Never add <[:~MODELNAME said~:]> or <[:~@MODELNAME:]> to your responses.
                         output = handled
                     # Record into conversation history so AI can see direct shell activity
                     try:
-                        self.conversation_history.append({'role': 'user', 'content': f'> {raw_cmd}\n{output}'.rstrip()})
+                        self.conversation_history.append({'role': 'user', 'content': f'! {raw_cmd}\n{output}'.rstrip()})
                     except Exception:
                         pass
                 # After a direct shell command, enable prefill for the next prompt
@@ -1978,9 +1964,9 @@ Never add <[:~MODELNAME said~:]> or <[:~@MODELNAME:]> to your responses.
                         if msg.get('role') != 'user':
                             continue
                         content = _content_to_text(msg.get('content')).strip()
-                        # Skip shell transcript entries recorded as user lines starting with '> '
+                        # Skip shell transcript entries recorded as user lines starting with '! '
                         first_line = content.splitlines()[0] if content else ''
-                        if first_line.startswith('> '):
+                        if first_line.startswith('! '):
                             continue
                         hist_norm = self._normalize_text_for_match(content)
                         if hist_norm == target_norm:
@@ -2057,7 +2043,7 @@ if __name__ == '__main__':
         if user_text:
             print(user_text, flush=True)
 
-        # Process exactly like a single REPL turn (except for the '>' direct-shell shortcut).
+        # Process exactly like a single REPL turn (except for the '!' direct-shell shortcut).
         cleaned_text, bots_to_call, ask_mode = app._parse_input(user_text)
 
         if ask_mode:
