@@ -1741,7 +1741,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                     time.sleep(delay)
                 self.interrupt_event.clear()
 
-                url, headers, payload = self._prepare_request(bot_name, messages, include_tools=True)
+                url, headers, payload = self._prepare_request(bot_name, messages, include_tools=not ask_mode)
 
                 result = self._stream_chat(url, headers, payload)
 
