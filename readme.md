@@ -269,10 +269,9 @@ Repeated `/img` commands add to the pending queue. The next normal chat or
 the model to describe them. Images in a normal conversation remain in its
 context after the queue is consumed. Debates do not consume pending images.
 
-**Current limitation:** `/imgclear` is advertised but its input is caught by
-the earlier `/img` prefix check, so it prints usage instead of clearing the
-queue. `/clear` also leaves pending images in place. Restart ConsAI to
-discard queued images without sending them.
+Use `/imgclear` to discard queued images without sending them. Images
+already sent remain in the conversation. `/clear` removes both queued
+images and the conversation context, and resets session usage counters.
 
 ## Moderated debates
 
@@ -314,7 +313,8 @@ not as a normal chat command.
 | --- | --- |
 | `/stats` | Show session cost and token totals, plus recorded usage for each request. |
 | `/lastjson` | Print the latest cached request payload and write cached response events to `/tmp/response.txt`. |
-| `/clear` | Clear the terminal, conversation context, and session usage counters. |
+| `/imgclear` | Discard pending image attachments. |
+| `/clear` | Clear the terminal, conversation context, pending images, and session usage counters. |
 | `<original prompt> /revert` | Remove the most recent matching user prompt and all later messages from the conversation. |
 | `exit` or Ctrl-D at the input prompt | Exit ConsAI. |
 
@@ -347,7 +347,7 @@ Conversation context lives in memory and is not restored when the program
 restarts. Typed interactive input is stored separately in
 `~/.consai_history` for recall, including `/ask` input. `/clear` and `/revert`
 do not erase that file. `/clear` also leaves the selected model, working
-directory, pending images, and last API debug data unchanged.
+directory, and last API debug data unchanged.
 
 ## Project instructions and settings
 

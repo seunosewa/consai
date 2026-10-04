@@ -1913,8 +1913,9 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
 
             if user_text.strip().lower() == '/clear':
                 os.system('cls' if platform.system() == 'Windows' else 'clear')
-                # Clear conversation and all session statistics
+                # Clear conversation, pending images and session statistics
                 self.conversation_history = []
+                self.pending_image_urls = []
                 self.usage_history = []
                 self.session_cost = 0.0
                 self.session_prompt_tokens = 0
@@ -1935,7 +1936,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
 
             # Image attachments: attach one or more images to the *next* prompt.
             # Usage: /img /path/to.png "path with spaces.jpg" https://...  (URLs also supported)
-            if user_text.strip().lower().startswith('/img'):
+            if re.match(r'^/img(?:\s|$)', user_text.strip(), re.I):
                 try:
                     parts = shlex.split(user_text)
                 except Exception:
