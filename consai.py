@@ -36,16 +36,23 @@ MODELS = {
     'fable':   {'name': '~anthropic/claude-fable-latest', 'reasoning': 'medium'},
 
     # GPT
-    'astra':      {'name': '~openai/gpt-astra-latest', 'reasoning': 'medium'},
     'sol':        {'name': '~openai/gpt-sol-latest', 'reasoning': 'medium'},
+    'astra':      {'name': '~openai/gpt-astra-latest', 'reasoning': 'medium'},
 
-    # Gemini
-    'geminipro':   {'name': '~google/gemini-pro-latest', 'reasoning': 'medium'},
-    'geminiflash': {'name': '~google/gemini-flash-latest', 'reasoning': 'medium'},
+    # Meta
+    'spark': {'name': 'meta/muse-spark-1.3', 'reasoning': 'medium'},
+    'sparkcontributor': {'name': 'meta/muse-spark-1.3-contributor', 'reasoning': 'medium'},
+
+    # Unbiased
+    'pareto': {'name': 'unbiased/pareto-26.10-preview'}, # very good for explaining concepts.
 
     # GLM
     'glmflash':  {'name': '~z-ai/glm-flash-latest', 'reasoning': 'medium'},
     'glm': {'name': '~z-ai/glm-latest', 'reasoning': 'medium'},
+
+    # DeepSeek
+    'dsflash': {'name': '~deepseek/deepseek-flash-latest', 'reasoning': 'medium'},
+    'dspro':   {'name': '~deepseek/deepseek-pro-latest', 'reasoning': 'medium'},
 
     # Kimi
     'kimi': {'name': '~moonshotai/kimi-latest', 'reasoning': 'medium'},
@@ -53,17 +60,14 @@ MODELS = {
     # Qwen
     'qwenflash': {'name': 'qwen/qwen3.8-flash', 'reasoning': 'medium'},
     'qwenmax':   {'name': 'qwen/qwen3.8-max-0902', 'reasoning': 'medium'},
-
-    # DeepSeek
-    'dspro':   {'name': '~deepseek/deepseek-pro-latest', 'reasoning': 'medium'},
-    'dsflash': {'name': '~deepseek/deepseek-flash-latest', 'reasoning': 'medium'},
-
+    
     # MiMo
-    'mimopro':   {'name': 'xiaomi/mimo-v2.6-pro', 'reasoning': 'medium'},
     'mimoflash': {'name': 'xiaomi/mimo-v2.6-flash', 'reasoning': 'medium'},
+    'mimopro':   {'name': 'xiaomi/mimo-v2.6-pro', 'reasoning': 'medium'},
 
-    # Unbiased
-    'pareto': {'name': 'unbiased/pareto-26.10-preview'},
+    # Gemini
+    'geminiflash': {'name': '~google/gemini-flash-latest', 'reasoning': 'medium'},
+    'geminipro':   {'name': '~google/gemini-pro-latest', 'reasoning': 'medium'},
 }
 
 # ANSI color codes
@@ -425,7 +429,7 @@ You are in a chatroom with User and OTHER helpful AI assistants: {otherbotsinfo}
         tempdir = '%TEMP%' if platform.system() == 'Windows' else '/tmp'
 
         agentrules = ""
-        for filepath in [os.path.expanduser('~/src/AGENTS.md'), './AGENTS.md']:
+        for filepath in ['../AGENTS.md', './AGENTS.md']:
             if os.path.exists(filepath):
                 try:
                     with open(filepath, 'r') as f:
@@ -433,25 +437,20 @@ You are in a chatroom with User and OTHER helpful AI assistants: {otherbotsinfo}
                 except Exception:
                     pass
 
-        toolinstructions = f'''Your executeshell tool is powerful. Use it when needed.
-Try your best to run shell commands in non-interactive mode e.g. `echo "command to run" | script`
-Think creatively about how to chain simple shell commands to solve any problem. Long command chains are BEST.
-Break complex tasks down into multiple tool calls if needed.
+        toolinstructions = f'''
 Use your Edit tool to change existing files. Create new files with the shell.
-
 Use your web search tool to search the web. Use your web fetch tool to read a web page.
-
 All backup files or temporary scripts should go into {tempdir}.
-Open and read files before mentioning them. Never guess what they contain. Always read them.
-Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.system()}
-''' if bot_name not in ("gpt5c",) else 'You do not have any tools. Ask user for help instead.\n'
-
+Open and read files before mentioning them. Never guess what they contain. Always read them.'''
+        
+        
         conclusion = '''
-        if you see the <[:~MODELNAME said~:]> prefix in an assistant message, it means that the model MODELNAME said it.
-        if you see <[:~@MODELNAME:]> in a user message, it means the user addressed the message to the model MODELNAME.
-        Never add <[:~MODELNAME said~:]> or <[:~@MODELNAME:]> to your responses.
+if you see the <[:~MODELNAME said~:]> prefix in an assistant message, it means that the model MODELNAME said it.
+if you see <[:~@MODELNAME:]> in a user message, it means the user addressed the message to the model MODELNAME.
+Never add <[:~MODELNAME said~:]> or <[:~@MODELNAME:]> to your responses.
         '''
-        r= f'{welcome}\n\n{toolinstructions}\n\n{agentrules}\n\n{conclusion}'
+        environment = f'Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.system()}'
+        r = f'{welcome}\n\n{toolinstructions}\n\n{agentrules}\n\n{conclusion}{environment}'
         return r
 
     def _get_user_input(self):
