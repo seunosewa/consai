@@ -279,112 +279,6 @@ def _image_ref_to_image_url(ref: str) -> str:
     b64 = base64.b64encode(data).decode('ascii')
     return f"data:{mime};base64,{b64}"
 
-def _parse_inline_tool_calls(content: str) -> List[Dict]:
-    """Parse inline tool calls from content using executeshell({"command": "command_goes_here"}) format."""
-    tool_calls = []
-    # Pattern for the original executeshell({...}) format
-    original_pattern = r'executeshell\s*\(\s*(\{.*?\})\s*\)'
-
-    # Pattern for the new <｜tool calls begin｜>...<｜tool calls end｜> format
-    # Accept both regular spaces and the U+2581 "▁" separator used by some wrappers
-    new_wrapper_pattern = r'<｜tool[\s▁]calls[\s▁]begin｜>(.*?)<｜tool[\s▁]calls[\s▁]end｜>'
-    # The specific tool call pattern inside the wrapper
-    new_tool_call_pattern = r'<｜tool[\s▁]call[\s▁]begin｜>\s*executeshell<｜tool[\s▁]sep｜>(\{.*?\})\s*<｜tool[\s▁]call[\s▁]end｜>'
-
-    # First, find and process the new wrapper format
-    wrapper_matches = re.finditer(new_wrapper_pattern, content, re.MULTILINE | re.DOTALL)
-    for i, wrapper_match in enumerate(wrapper_matches):
-        wrapped_content = wrapper_match.group(1)
-
-        tool_call_matches = re.finditer(new_tool_call_pattern, wrapped_content, re.MULTILINE | re.DOTALL)
-        for j, tc_match in enumerate(tool_call_matches):
-            args_str = tc_match.group(1).strip()
-            try:
-                args = json.loads(args_str)
-                command = args.get('command')
-                if command:
-                    tool_call = {
-                        'id': f'inline_new_{int(time.time())}_{i}_{j}',
-                        'name': 'executeshell',
-                        'args': {
-                            'command': command,
-                        }
-                    }
-                    tool_calls.append(tool_call)
-                else:
-                    print(f"{Colors.RED}Error: Tool call missing 'command' argument in new format: {args_str}{Colors.RESET}")
-            except json.JSONDecodeError:
-                print(f"Warning: Could not parse tool call JSON from new format: {args_str}")
-                continue
-
-    # Then, find and process the original executeshell({...}) format
-    original_matches = re.finditer(original_pattern, content, re.MULTILINE | re.DOTALL)
-    for i, match in enumerate(original_matches):
-        args_str = match.group(1).strip()
-        
-        try:
-            # Parse the JSON to handle proper escaping
-            args = json.loads(args_str)
-            command = args.get('command')
-            if command:
-                tool_call = {
-                    'id': f'inline_old_{int(time.time())}_{i}',
-                    'name': 'executeshell',
-                    'args': {
-                        'command': command,
-                    }
-                }
-                tool_calls.append(tool_call)
-            else:
-                print(f"{Colors.RED}Error: Tool call missing 'command' argument in original format: {args_str}{Colors.RESET}")
-        except json.JSONDecodeError:
-            # Skip malformed JSON
-            print(f"Warning: Could not parse tool call JSON: {args_str}")
-            continue
-            
-    # As a fallback, check for a markdown code block at the very end of the response,
-    # but only if it is preceded by a colon.
-    markdown_pattern = r':\s*(```(?:bash|shell|sh)\s*\n(?:.*?)\n```\s*)$'
-    
-    # We search on the stripped content to correctly find the end
-    match = re.search(markdown_pattern, content.strip(), re.DOTALL)
-    if match:
-        # The command is inside the matched block
-        block_content = match.group(1)
-        inner_match = re.search(r'```(?:bash|shell|sh)\s*\n(.*?)\n```', block_content, re.DOTALL)
-        if inner_match:
-            command = inner_match.group(1).strip()
-            if command:
-                tool_calls.append({
-                    'id': f'inline_md_{int(time.time())}',
-                    'name': 'executeshell',
-                    'args': {'command': command}
-                })
-            else:
-                print(f"{Colors.RED}Error: Tool call missing command in markdown format{Colors.RESET}")
-    return tool_calls
-
-def _remove_inline_tool_calls(content: str) -> str:
-    """Remove inline tool call syntax from content for display."""
-    cleaned_content = content
-    
-    # --- First, remove the specific markdown block if it exists ---
-    # This pattern finds a block at the end of the string preceded by a colon,
-    # and the replacement removes the block but keeps the colon.
-    markdown_pattern = r'(:\s*)```(?:bash|shell|sh)\s*\n(?:.*?)\n```\s*$'
-    # We use re.subn to see if a substitution was made.
-    cleaned_content, num_subs = re.subn(markdown_pattern, r'\1', cleaned_content.rstrip(), count=1, flags=re.DOTALL)
-    if num_subs > 0:
-        return cleaned_content # Return early if we found and removed a markdown tool
-    
-    # --- If no markdown tool was found, clean up other formats ---
-    pattern_original = r'executeshell\s*\(\s*\{.*?\}\s*\)'
-    pattern_new_wrapper = r'<｜tool[\s ]calls[\s ]begin｜>.*?<｜tool[\s ]calls[\s ]end｜>'
-    
-    # Combine patterns with OR for general cleanup
-    combined_pattern = f'{pattern_new_wrapper}|{pattern_original}'
-    
-    return re.sub(combined_pattern, '', content, flags=re.MULTILINE | re.DOTALL)
 class CommandLineAIChat:
     """A command-line AI chat application using the OpenRouter library for various models."""
 
@@ -1222,7 +1116,7 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
                             'content': error_msg
                         }
                         self.conversation_history.append(tool_message)
-                except (KeyError, ValueError) as e:
+                except (KeyError, ValueError, AttributeError) as e:
                     error_msg = f"Error processing tool call: {e}"
                     tool_message = {
                         'role': 'tool',
@@ -1879,7 +1773,7 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
 
                 # --- UNIFIED TOOL HANDLING ---
 
-                # 1. Consolidate all tool calls (formal JSON + inline text) into a standard format
+                # 1. Collect the tool calls into a standard format
                 all_tool_calls = []
 
                 # Keep track of whether we streamed any text content
@@ -1905,27 +1799,8 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
                             # Add with empty args to maintain flow
                             all_tool_calls.append({'id': tc['id'], 'name': tc['name'], 'args': {}})
 
-                # Parse and add any inline tool calls from the text content
-                if full_response:
-                    inline_tool_calls = _parse_inline_tool_calls(full_response)
-                    # The parse function already returns the standard format {'id':..., 'name':..., 'args':...}
-                    if inline_tool_calls:
-                        all_tool_calls.extend(inline_tool_calls)
-
-                # Deduplicate tool calls based on the command string to prevent duplicates
-                if all_tool_calls:
-                    seen_commands = set()
-                    unique_tool_calls = []
-                    for tc in all_tool_calls:
-                        command = tc.get('args', {}).get('command')
-                        if tc.get('name') != 'executeshell': unique_tool_calls.append(tc)
-                        elif command and command not in seen_commands:
-                            unique_tool_calls.append(tc)
-                            seen_commands.add(command)
-                    all_tool_calls = unique_tool_calls
-
                 # 2. Add the text part of the response to history (if it exists)
-                cleaned_content = _remove_inline_tool_calls(full_response).strip()
+                cleaned_content = full_response.strip()
 
                 # If there's any text content, print it now, but only if it wasn't already streamed.
                 if cleaned_content and not text_streamed:
