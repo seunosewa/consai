@@ -360,17 +360,17 @@ class CommandLineAIChat:
 
     def _play_completion_beep(self):
         """Play completion beep if available and not interrupted."""
-        if not self.interrupt_event.is_set() and shutil.which('afplay'):
-            # Run beep asynchronously to avoid interrupting UI flow
-            try:
-                subprocess.Popen(
-                    ['afplay', '/System/Library/Sounds/Glass.aiff'],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-            except Exception:
-                # Silently fail if beep cannot be played
-                pass
+        if self.interrupt_event.is_set(): return
+        if shutil.which('afplay'):
+            cmd = ['afplay', '/System/Library/Sounds/Glass.aiff']
+        elif shutil.which('powershell.exe'):  # WSL: play through Windows
+            cmd = ['powershell.exe', '-NoProfile', '-c',
+                   '[console]::beep(800,200)']
+        else: return
+        # Run beep asynchronously to avoid interrupting UI flow
+        quiet = subprocess.DEVNULL
+        try: subprocess.Popen(cmd, stdin=quiet, stdout=quiet, stderr=quiet)
+        except Exception: pass  # Silently fail if beep cannot be played
 
     def _handle_sigint(self, signum, frame):
         """Handles SIGINT (ctrl-c) based on current state."""
@@ -448,7 +448,7 @@ if you see the <[:~modelname said~:]> prefix in an assistant message, it means t
 if you see <[:~@modelname:]> in a user message, it means the user addressed the message to the model modelname.
 Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         '''
-        environment = f'Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.system()}'
+        environment = f'Directory: {os.getcwd()} | Date: {time.strftime("%Y-%m-%d")} | OS: {platform.system()}'
         r = f'{toolinstructions}\n\n{conclusion}\n\n{environment}{agentrules}\n\n'
         return r
 
@@ -648,11 +648,13 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
             print(f'\n{Colors.YELLOW}{command}{Colors.RESET}')
         if require_approval and not command_is_readonly(command) and not self._approve('Run this command?'):
             return 'Command execution cancelled by user.'
+        # require_approval marks a model's command: stop git waiting in a pager
+        env = {**os.environ, 'GIT_PAGER': 'cat'} if require_approval else None
 
         # Always attempt interactive PTY mode: allocate a TTY and forward keystrokes + output
         try:
             if sys.stdin.isatty():
-                return self._run_command_interactive_pty(command, on_chunk)
+                return self._run_command_interactive_pty(command, on_chunk, env)
             else:
                 preface = '[stdin is not a TTY; using pseudo-tty wrapper]\n'
                 if on_chunk:
@@ -680,6 +682,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                 text=True,
                 bufsize=1,
                 universal_newlines=True,
+                env=env,
             )
 
             # Enforce a hard timeout similar to previous behavior
@@ -872,7 +875,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
 
         return ''.join(transcript_parts)
 
-    def _run_command_interactive_pty(self, command: str, on_chunk: Optional[Callable[[str], None]]) -> str:
+    def _run_command_interactive_pty(self, command: str, on_chunk: Optional[Callable[[str], None]], env: Optional[Dict[str, str]] = None) -> str:
         """Run command attached to a PTY, forwarding keystrokes and streaming output.
 
         - Sets the user's terminal to raw mode so all keys (including arrows, ctrl) pass through
@@ -899,6 +902,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                 stdout=slave_fd,
                 stderr=slave_fd,
                 preexec_fn=os.setsid if hasattr(os, 'setsid') else None,
+                env=env,
             )
         finally:
             try:
