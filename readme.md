@@ -108,9 +108,9 @@ You can address several models in one prompt:
 Compare the two approaches discussed above. /sonnet /astra
 ```
 
-They answer one at a time in the order listed in the `MODELS` configuration,
-not necessarily the order typed. Later models see earlier replies. Repeating
-a model's name does not give it an extra turn.
+They answer one at a time in the order you type their names. Later models
+see earlier replies. Repeating a model's name does not give it an extra
+turn; its first appearance determines its place in the order.
 
 ### Multiline input
 

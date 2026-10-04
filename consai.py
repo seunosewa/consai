@@ -492,19 +492,21 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
             return None
 
     def _parse_input(self, user_text):
-        """Parses user input for commands and text."""
+        """Parse input, keeping models in order of first appearance."""
         ask_mode = '/ask' in user_text
         user_text = user_text.replace('/ask', '').strip()
 
-        bot_commands = []
-        for bot in MODELS:
-            # Match /bot followed by end of string, whitespace, or punctuation
-            pattern = rf'/{re.escape(bot)}(?=\s|$|[^\w])'
-            user_text, count = re.subn(
-                pattern, f'<[:~@{bot}:]>', user_text)
-            if count: bot_commands.append(bot)
+        botcommands = []
+        names = '|'.join(re.escape(bot) for bot in MODELS)
+        pattern = rf'/({names})(?=\s|$|[^\w])'
 
-        return user_text, bot_commands, ask_mode
+        def replace(match):
+            bot = match[1]
+            if bot not in botcommands: botcommands.append(bot)
+            return f'<[:~@{bot}:]>'
+
+        user_text = re.sub(pattern, replace, user_text)
+        return user_text, botcommands, ask_mode
 
 
     def _prepare_messages(self, bot_name: str, ask_mode: bool = False) -> List[Dict]:
