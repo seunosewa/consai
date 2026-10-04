@@ -634,7 +634,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         except OSError as e: return f'Error writing {path}: {e}'
         return f'Edited {path}: replaced {n} occurrence(s).'
 
-    def _executeshell_command(self, command: str, on_chunk: Optional[Callable[[str], None]] = None, require_approval: bool = True, echo_command: bool = True) -> str:
+    def _executeshell_command(self, command: str, on_chunk: Optional[Callable[[str], None]] = None, originatedby: str = 'ai', echo_command: bool = True) -> str:
         """Executes a shell command after checking if it's safe.
 
         - Always attempts to run with a PTY (interactive-capable). If stdin is a TTY, keystrokes
@@ -646,10 +646,10 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         """
         if echo_command:
             print(f'\n{Colors.YELLOW}{command}{Colors.RESET}')
-        if require_approval and not command_is_readonly(command) and not self._approve('Run this command?'):
+        if originatedby == 'ai' and not command_is_readonly(command) and not self._approve('Run this command?'):
             return 'Command execution cancelled by user.'
-        # require_approval marks a model's command: stop git waiting in a pager
-        env = {**os.environ, 'GIT_PAGER': 'cat'} if require_approval else None
+        # AI commands: no pager, so git prints and exits without waiting
+        env = {**os.environ, 'GIT_PAGER': 'cat'} if originatedby == 'ai' else None
 
         # Always attempt interactive PTY mode: allocate a TTY and forward keystrokes + output
         try:
@@ -820,7 +820,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                     pass
             return False, msg
 
-    def _maybe_handle_cd_and_execute(self, command: str, on_chunk: Optional[Callable[[str], None]], require_approval: bool, echo_command: bool = True) -> Optional[str]:
+    def _maybe_handle_cd_and_execute(self, command: str, on_chunk: Optional[Callable[[str], None]], originatedby: str, echo_command: bool = True) -> Optional[str]:
         """If command starts with a cd, handle it in-process and optionally execute trailing command.
 
         Supports forms:
@@ -870,7 +870,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                 return ' '.join(out)
 
             rest_command = rejoin(rest_tokens)
-            rest_output = self._executeshell_command(rest_command, on_chunk=on_chunk, require_approval=require_approval, echo_command=echo_command)
+            rest_output = self._executeshell_command(rest_command, on_chunk=on_chunk, originatedby=originatedby, echo_command=echo_command)
             transcript_parts.append(rest_output)
 
         return ''.join(transcript_parts)
@@ -1095,7 +1095,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                             print(text, end='', flush=True)
 
                         # First, check for an in-process cd (and optional trailing command)
-                        handled = self._maybe_handle_cd_and_execute(command, on_chunk=_print_stream_chunk, require_approval=True, echo_command=False)
+                        handled = self._maybe_handle_cd_and_execute(command, on_chunk=_print_stream_chunk, originatedby='ai', echo_command=False)
                         if handled is not None:
                             output = handled
                         else:
@@ -1892,9 +1892,9 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                     def _print_direct(text: str) -> None:
                         print(f"{text}", end='', flush=True)
                     # Handle in-process cd (and optional trailing command) first
-                    handled = self._maybe_handle_cd_and_execute(raw_cmd, on_chunk=_print_direct, require_approval=False)
+                    handled = self._maybe_handle_cd_and_execute(raw_cmd, on_chunk=_print_direct, originatedby='user')
                     if handled is None:
-                        output = self._executeshell_command(raw_cmd, on_chunk=_print_direct, require_approval=False, echo_command=False)
+                        output = self._executeshell_command(raw_cmd, on_chunk=_print_direct, originatedby='user', echo_command=False)
                     else:
                         output = handled
                     # Record into conversation history so AI can see direct shell activity
