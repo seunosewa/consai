@@ -1275,13 +1275,13 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
             except Exception:
                 continue
 
+            if event.get('usage'):
+                last_usage = event.get('usage')
+
             choices = event.get('choices', [])
             if not choices:
                 continue
             delta = choices[0].get('delta', {})
-
-            if event.get('usage'):
-                last_usage = event.get('usage')
 
             if 'reasoning_details' in delta and delta.get('reasoning_details'):
                 reasoning_details_acc.extend(delta.get('reasoning_details'))
@@ -1574,8 +1574,7 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
                               'siliconflow/fp8', 'unbiased'],
                     'allow_fallbacks': False
                 },
-                'temperature': 0.6,
-                'usage': {'include': True}
+                'temperature': 0.6
             }
 
             if model_key[:4] == 'qwen':
