@@ -141,9 +141,9 @@ the main context. Multiple selected models still share this temporary
 conversation. Usage still counts toward the session totals, and the last
 model called becomes the default for the next prompt.
 
-`/ask` is a context shortcut, not a read-only mode: shell, edit, and web tools
-remain available. Its initial request uses a short question-answering
-system prompt instead of the normal project instructions.
+`/ask` runs without tools: the model cannot run shell commands, edit files,
+search the web, or fetch pages. It uses a short question-answering system
+prompt instead of the normal project instructions.
 
 ## Run a prompt from the command line
 
@@ -357,9 +357,8 @@ included when present, parent first, with their absolute paths. This is a
 two-file lookup, not a search through every ancestor directory.
 
 Use those files for project conventions and instructions. Changing the
-files or using `! cd` changes what subsequent normal requests see. The
-initial `/ask` request and debates use their own system prompts. If an
-`/ask` response invokes a local tool, the follow-up uses the normal prompt.
+files or using `! cd` changes what subsequent normal requests see.
+`/ask` requests and debates use their own system prompts instead.
 
 Model and API settings are defined in `consai.py`:
 
