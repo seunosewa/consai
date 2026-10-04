@@ -40,8 +40,8 @@ MODELS = {
     'sol':        {'name': '~openai/gpt-sol-latest', 'reasoning': 'medium'},
 
     # Gemini
-    '31pro':   {'name': '~google/gemini-pro-latest', 'reasoning': 'medium'},
-    '38flash': {'name': '~google/gemini-flash-latest', 'reasoning': 'medium'},
+    'geminipro':   {'name': '~google/gemini-pro-latest', 'reasoning': 'medium'},
+    'geminiflash': {'name': '~google/gemini-flash-latest', 'reasoning': 'medium'},
 
     # GLM
     'glmflash':  {'name': '~z-ai/glm-flash-latest', 'reasoning': 'medium'},
@@ -49,17 +49,21 @@ MODELS = {
 
     # Kimi
     'kimi': {'name': '~moonshotai/kimi-latest', 'reasoning': 'medium'},
+
     # Qwen
     'qwenflash': {'name': 'qwen/qwen3.8-flash', 'reasoning': 'medium'},
     'qwenmax':   {'name': 'qwen/qwen3.8-max-0902', 'reasoning': 'medium'},
 
     # DeepSeek
-    'deepseekpro':   {'name': '~deepseek/deepseek-pro-latest', 'reasoning': 'medium'},
-    'deepseekflash': {'name': '~deepseek/deepseek-flash-latest', 'reasoning': 'medium'},
+    'dspro':   {'name': '~deepseek/deepseek-pro-latest', 'reasoning': 'medium'},
+    'dsflash': {'name': '~deepseek/deepseek-flash-latest', 'reasoning': 'medium'},
 
     # MiMo
     'mimopro':   {'name': 'xiaomi/mimo-v2.6-pro', 'reasoning': 'medium'},
     'mimoflash': {'name': 'xiaomi/mimo-v2.6-flash', 'reasoning': 'medium'},
+
+    # Unbiased
+    'pareto': {'name': 'unbiased/pareto-26.10-preview'},
 }
 
 # ANSI color codes
@@ -84,6 +88,13 @@ NETRO = ('dig', 'host', 'netstat', 'ping', 'traceroute', 'curl')
 MISCRO = ('clear', 'false', 'less', 'more', 'seq', 'sleep', 'test', 'true', 'whereis', 'which', 'yes', 'ffprobe')
 MACOSRO = ('jq',) # 'open', 'xargs' unsafe
 ROLIST = TEXTRO + FSRO + SYSRO + NETRO + MISCRO + MACOSRO
+
+# Web tools that OpenRouter runs for the model (server tools).
+# Search: about $0.007 per call. Fetch: about $0.001 per page, capped in size.
+WEBTOOLS = [
+    {'type': 'openrouter:web_search', 'parameters': {'engine': 'exa'}},
+    {'type': 'openrouter:web_fetch', 'parameters': {'engine': 'exa', 'max_content_tokens': 20000}},
+]
 
 def get_single_key():
     """Get a single key press without requiring Enter."""
@@ -515,9 +526,6 @@ class CommandLineAIChat:
         
         otherbotsinfo = ", ".join([f"{name.upper()}" for name, _ in MODELS.items() if name != bot_name])
         
-        googleapikey = os.getenv('GOOGLE_SEARCH_API_KEY')
-        googlecseid = os.getenv('GOOGLE_CSE_ID')
-
         welcome = f'''You are {assistantname}, a helpful AI assistant.
 You are in a chatroom with User and OTHER helpful AI assistants: {otherbotsinfo}.'''
         tempdir = '%TEMP%' if platform.system() == 'Windows' else '/tmp'
@@ -537,8 +545,7 @@ Think creatively about how to chain simple shell commands to solve any problem. 
 Break complex tasks down into multiple tool calls if needed.
 Use your Edit tool to change existing files. Create new files with the shell.
 
-Use google to search the web:
-`curl "https://www.googleapis.com/customsearch/v1?key={googleapikey}&cx={googlecseid}&q=YOUR_QUERY" | jq '[.items[] | {{title, link, snippet}}]'`
+Use your web search tool to search the web. Use your web fetch tool to read a web page.
 
 All backup files or temporary scripts should go into {tempdir}.
 Open and read files before mentioning them. Never guess what they contain. Always read them.
@@ -635,13 +642,13 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
             else:
                 formatted_msg = msg.copy()
             
-            # Add reasoning_details for Gemini thinking models if they exist.
-            if (bot_name in ('3pro', '35flash', '3flash')
-                    and 'reasoning_details' in msg):
+            # Prefer structured reasoning, falling back to raw text.
+            formatted_msg.pop('reasoning_details', None)
+            formatted_msg.pop('reasoning', None)
+            if msg.get('reasoning_details'):
                 formatted_msg['reasoning_details'] = msg['reasoning_details']
-            elif 'reasoning_details' in formatted_msg:
-                # Ensure we don't leak reasoning to other models if it was copied
-                formatted_msg.pop('reasoning_details')
+            elif msg.get('reasoning'):
+                formatted_msg['reasoning'] = msg['reasoning']
                 
             formatted_history.append(formatted_msg)
 
@@ -1333,6 +1340,7 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
 
         full_response = ''
         reasoning_details_acc = []
+        reasoning = ''
         tool_calls = {}
         first_chunk_content = True
         pending_whitespace = ''
@@ -1345,6 +1353,7 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
         
         buffering_first_line = True
         first_line_buffer = ''
+        sources = {}  # url -> title, from web search citations
 
         STOP_TOKENS = {"<|im_start|>", "<|im_end|>", "<|endoftext|>", "<|repo_name|>"}
 
@@ -1383,8 +1392,13 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
             if 'reasoning_details' in delta and delta.get('reasoning_details'):
                 reasoning_details_acc.extend(delta.get('reasoning_details'))
 
+            for note in delta.get('annotations') or []:
+                cite = note.get('url_citation') or {}
+                if cite.get('url'): sources.setdefault(cite['url'], cite.get('title') or '')
+
             if 'reasoning' in delta and delta.get('reasoning'):
                 reasoning_text = delta.get('reasoning')
+                reasoning += reasoning_text
                 cleaned_reasoning = re.sub(r'^\s*\*\*.*?\*\*\s*\n*', '', reasoning_text, flags=re.MULTILINE)
                 compact_reasoning = re.sub(r'\n{3,}', '\n\n', cleaned_reasoning)
                 
@@ -1622,6 +1636,8 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
             'full_response': full_response,
             'tool_calls': tool_calls,
             'reasoning_details_acc': reasoning_details_acc,
+            'reasoning': reasoning,
+            'sources': sources,
             'last_usage': last_usage,
             'response_events': response_events,
             'cancelled': cancelled,
@@ -1660,7 +1676,8 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
                               'google-ai-studio', 'google-vertex',
                               'parasail/bf16', 'parasail',
                               'fireworks', 'deepinfra/bf16', 'novita', 'novita/fp8',
-                              'stealth', 'deepseek', 'atlas-cloud/fp8', 'siliconflow/fp8'],
+                              'stealth', 'deepseek', 'atlas-cloud/fp8',
+                              'siliconflow/fp8', 'unbiased'],
                     'allow_fallbacks': False
                 },
                 'temperature': 0.6,
@@ -1674,7 +1691,7 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
                 payload['repetition_penalty'] = 1.05
 
             if include_tools and model_key not in ('gpt5c',):
-                payload['tools'] = [self.shell_tool_definition, self.edittool]
+                payload['tools'] = [self.shell_tool_definition, self.edittool] + WEBTOOLS
                 payload['tool_choice'] = 'auto'
 
             if model_key == 'kimi':
@@ -1846,6 +1863,11 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
                     self.bot_running = False
                     break
 
+                if result['sources']:
+                    print(f"\n{Colors.GREY}Sources:")
+                    for link, title in result['sources'].items(): print(f'  {link}  {title}')
+                    print(Colors.RESET, end='')
+
                 if result['last_usage']:
                     self._record_and_print_usage(bot_name, result['last_usage'])
 
@@ -1922,6 +1944,8 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
                     msg = {'role': 'assistant', 'content': cleaned_content, 'bot_id': bot_name}
                     if reasoning_details_acc:
                         msg['reasoning_details'] = reasoning_details_acc
+                    elif result.get('reasoning'):
+                        msg['reasoning'] = result['reasoning']
                     self.conversation_history.append(msg)
 
                 # 3. Add the tool call part to history (if it exists) and then execute
@@ -1943,10 +1967,11 @@ Directory: {os.getcwd()} | Date: {time.strftime('%Y-%m-%d')} | OS: {platform.sys
                         'tool_calls': openai_tool_calls_for_history,
                         'bot_id': bot_name
                     }
-                    # Always add reasoning_details to tool call messages for Gemini 3 Pro compatibility
-                    # (requires thought_signature to be preserved with function calls)
+                    # Preserve reasoning when continuing after tool results.
                     if reasoning_details_acc:
                         tc_msg['reasoning_details'] = reasoning_details_acc
+                    elif result.get('reasoning'):
+                        tc_msg['reasoning'] = result['reasoning']
 
                     self.conversation_history.append(tc_msg)
 
