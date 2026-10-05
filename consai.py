@@ -5,7 +5,6 @@ import os
 import platform
 import re
 import mimetypes
-import requests
 import shlex
 import signal
 import subprocess
@@ -22,6 +21,8 @@ import string
 from getpass import getpass
 from threading import Event
 from typing import Dict, List, Optional, Callable
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
@@ -1242,16 +1243,21 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
 
     def _stream_chat(self, url: str, headers: dict, payload: dict) -> dict:
         """Make HTTP POST and stream SSE response. Returns accumulated state."""
-        response = requests.post(url, headers=headers, json=payload, stream=True, timeout=60)
-        response.encoding = 'utf-8'
-        if response.status_code != 200:
-            print(f"\n{Colors.RED}API call failed with status {response.status_code}{Colors.RESET}")
-            try:
-                print(f"{Colors.GREY}{response.text}{Colors.RESET}")
-            except Exception:
-                pass
-            raise Exception(f"API call failed with status {response.status_code}")
+        data = json.dumps(payload, allow_nan=False).encode('utf-8')
+        request = Request(url, data=data, headers=headers, method='POST')
+        try: response = urlopen(request, timeout=60)
+        except HTTPError as error: response = error
+        with response:
+            if response.status != 200:
+                message = f'API call failed with status {response.status}'
+                print(f'\n{Colors.RED}{message}{Colors.RESET}')
+                body = response.read().decode('utf-8', errors='replace')
+                print(f'{Colors.GREY}{body}{Colors.RESET}')
+                raise RuntimeError(message)
+            return self._readsse(response)
 
+    def _readsse(self, response) -> dict:
+        """Parse SSE lines; the caller owns and closes the response."""
         full_response = ''
         reasoning_details_acc = []
         reasoning = ''
@@ -1271,16 +1277,16 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
 
         STOP_TOKENS = {"<|im_start|>", "<|im_end|>", "<|endoftext|>", "<|repo_name|>"}
 
-        for raw_line in response.iter_lines(decode_unicode=True):
+        for rawline in response:
+            rawline = rawline.decode('utf-8', errors='replace')
             if self.interrupt_event.is_set():
                 try:
                     response.close()
                 except Exception:
                     pass
                 break
-            if not raw_line:
-                continue
-            line = raw_line.strip()
+            if not rawline: continue
+            line = rawline.strip()
             if line.startswith(':'):
                 continue
             if line.startswith('data:'):

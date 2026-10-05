@@ -21,7 +21,8 @@ From the directory containing `consai.py`, install the dependencies:
 python3 -m pip install -r requirements.txt
 ```
 
-The dependencies are `prompt_toolkit` and `requests`.
+The only external Python dependency is `prompt_toolkit`. HTTP requests and
+streaming use Python's built-in `urllib.request`.
 Commands the assistant runs also need their own programs installed, such as
 Git for repository work.
 
