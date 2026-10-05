@@ -1307,6 +1307,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
 
             content = delta.get('content')
             if content:
+                if reasoning_printed and not full_response: print(flush=True)
                 full_response += content
 
                 if buffering_first_line:
