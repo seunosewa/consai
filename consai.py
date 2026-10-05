@@ -89,6 +89,7 @@ MACOSRO = ('jq',) # 'open', 'xargs' unsafe
 ROLIST = TEXTRO + FSRO + SYSRO + NETRO + MISCRO + MACOSRO
 MAYBEUNSAFE = ('awk', 'curl', 'date', 'dmesg', 'ffprobe', 'file', 'find', 'git', 'history', 'hostname', 'lsof', 'man', 'rg', 'sed', 'sort', 'tree', 'uniq')
 
+
 # Web tools that OpenRouter runs for the model (server tools).
 # Search: about $0.007 per call. Fetch: about $0.001 per page, capped in size.
 WEBTOOLS = [
