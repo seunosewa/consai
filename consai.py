@@ -80,16 +80,14 @@ class Colors:
 load_dotenv()
 
 # Read-only command lists for security checks
-TEXTRO = ('cat', 'cut', 'diff', 'echo', 'fmt', 'grep', 'head', 'nl', 'paste', 'printf', 'rev', 'rg', 'sort', 'tail', 'tr', 'uniq', 'wc', 'sed', 'awk', 'jq')
-FSRO = ('cd', 'basename', 'cmp', 'comm', 'df', 'dirname', 'du', 'file', 'ls', 'pwd', 'realpath', 'stat', 'tree', 'find')
-SYSRO = ('cal', 'date', 'dmesg', 'history', 'hostname', 'id', 'lsof', 'man', 'ps', 'uname', 'uptime', 'who', 'whoami')
+TEXTRO = ('cat', 'cut', 'diff', 'echo', 'fmt', 'grep', 'head', 'nl', 'paste', 'printf', 'rev', 'tail', 'tr', 'wc')
+FSRO = ('basename', 'cd', 'cmp', 'comm', 'df', 'dirname', 'du', 'ls', 'pwd', 'realpath', 'stat')
+SYSRO = ('cal', 'id', 'ps', 'uname', 'uptime', 'who', 'whoami')
 NETRO = ('dig', 'host', 'netstat', 'ping', 'traceroute')
-MISCRO = ('clear', 'false', 'seq', 'sleep', 'test', 'true', 'whereis', 'which', 'yes', 'ffprobe')
+MISCRO = ('clear', 'false', 'seq', 'sleep', 'test', 'true', 'whereis', 'which', 'yes')
 MACOSRO = ('jq',) # 'open', 'xargs' unsafe
 ROLIST = TEXTRO + FSRO + SYSRO + NETRO + MISCRO + MACOSRO
-MAYBEUNSAFE = ('curl', 'sort', 'uniq', 'sed', 'awk', 'rg', 'find', 'file', 'tree', 'date', 'dmesg', 'history', 'hostname', 'lsof', 'man', 'ffprobe')
-
-
+MAYBEUNSAFE = ('awk', 'curl', 'date', 'dmesg', 'ffprobe', 'file', 'find', 'git', 'history', 'hostname', 'lsof', 'man', 'rg', 'sed', 'sort', 'tree', 'uniq')
 
 # Web tools that OpenRouter runs for the model (server tools).
 # Search: about $0.007 per call. Fetch: about $0.001 per page, capped in size.
@@ -650,7 +648,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         """
         if echo_command:
             print(f'\n{Colors.YELLOW}{command}{Colors.RESET}')
-        if originatedby == 'ai' and not command_is_readonly(command) and not self._approve('Run this command?'):
+        if originatedby == 'ai' and not commandisreadonly(command) and not self._approve('Run this command?'):
             return 'Command execution cancelled by user.'
         # AI commands: no pager, so git prints and exits without waiting
         env = {**os.environ, 'GIT_PAGER': 'cat'} if originatedby == 'ai' else None
@@ -2042,7 +2040,219 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
 
         print('\nGoodbye!')
 
-# INSERT MAYBEUNSAFE COMMAND FILTER HERE
+# Checks for MAYBEUNSAFE commands. Each takes the words after the command name
+# and returns True if the command only reads with those arguments.
+
+def flagsok(args, plain, valued='', longs=(), operands=None) -> bool:
+    """True if every option is a known one.
+    plain: short flags that take no value. valued: short flags that take a
+    value. longs: long option names. operands: most non-option words allowed."""
+    count = 0
+    for a in args:
+        # Some tools, such as macOS uniq, stop reading options at the first
+        # file name, so a later option also counts as a file name
+        if count and a.startswith('-') and len(a) > 1: count += 1
+        # A bare -- is not a known option, so it asks. A flag that takes a
+        # value can swallow it, so it does not reliably end the options.
+        if a.startswith('--'):
+            if a.split('=')[0] not in longs: return False
+        elif a.startswith('-') and len(a) > 1:
+            for c in a[1:]:
+                # The rest of the word is this flag's value
+                if c in valued: break
+                if c not in plain: return False
+        else: count += 1
+    return operands is None or count <= operands
+
+# sort: all but -o, --output, -T, --temporary-directory, --compress-program
+SORTLONG = {
+    '--check', '--merge', '--unique', '--stable', '--ignore-leading-blanks',
+    '--dictionary-order', '--ignore-case', '--general-numeric-sort',
+    '--human-numeric-sort', '--ignore-nonprinting', '--month-sort',
+    '--numeric-sort', '--random-sort', '--reverse', '--version-sort', '--sort',
+    '--key', '--field-separator', '--zero-terminated', '--buffer-size',
+    '--parallel', '--batch-size', '--debug', '--help', '--version'}
+
+def sortok(args: List[str]) -> bool:
+    """True if sort prints its result instead of writing a file."""
+    return flagsok(args, 'bCcdfghiMmnRrsuVz', 'kSt', SORTLONG)
+
+UNIQLONG = {
+    '--count', '--repeated', '--all-repeated', '--unique', '--ignore-case',
+    '--skip-fields', '--skip-chars', '--check-chars', '--group',
+    '--zero-terminated', '--help', '--version'}
+
+def uniqok(args: List[str]) -> bool:
+    """True if uniq has at most one file. A second file is written to."""
+    return flagsok(args, 'cdDiuz', 'fsw', UNIQLONG, operands=1)
+
+# rg: common flags. Not here, so they ask: --pre, --pre-glob, --hostname-bin
+RGLONG = {
+    '--files', '--hidden', '--no-ignore', '--no-ignore-vcs', '--glob',
+    '--iglob', '--type', '--type-not', '--type-list', '--count',
+    '--count-matches', '--files-with-matches', '--files-without-match',
+    '--line-number', '--no-line-number', '--heading', '--no-heading',
+    '--with-filename', '--no-filename', '--max-count', '--max-depth',
+    '--max-columns', '--max-filesize', '--context', '--after-context',
+    '--before-context', '--ignore-case', '--smart-case', '--case-sensitive',
+    '--fixed-strings', '--word-regexp', '--line-regexp', '--only-matching',
+    '--invert-match', '--multiline', '--multiline-dotall', '--pcre2',
+    '--regexp', '--replace', '--passthru', '--json', '--color', '--column',
+    '--sort', '--sortr', '--stats', '--trim', '--follow', '--text', '--null',
+    '--no-messages', '--vimgrep', '--unrestricted', '--search-zip',
+    '--one-file-system', '--threads', '--no-config', '--debug', '--help',
+    '--version'}
+
+def rgok(args: List[str]) -> bool:
+    """True if rg has only known flags. None of them runs a program."""
+    plain, valued = '.0FHILNPSUVabchilnopqsuvwxz', 'ABCdEefgjMmrTt'
+    return flagsok(args, plain, valued, RGLONG)
+
+# find options, operators, tests and actions that only read (BSD and GNU)
+FINDOK = set('''
+    -H -L -P -E -X -d -s -x -depth -maxdepth -mindepth -mount -xdev -follow
+    -daystart -noleaf -regextype -a -and -o -or -not
+    -name -iname -path -ipath -wholename -iwholename -regex -iregex -lname
+    -ilname -type -xtype -size -empty -perm -user -group -uid -gid -nouser
+    -nogroup -links -inum -samefile -newer -anewer -cnewer -newermt -mtime
+    -mmin -atime -amin -ctime -cmin -readable -writable -executable -true
+    -false -print -print0 -printf -ls -prune -quit'''.split())
+# A value such as -7 or -10k, as in -mtime -7
+FINDNUM = re.compile(r'-[0-9]+[A-Za-z]*')
+
+def findok(args: List[str]) -> bool:
+    """True if every word that starts with - is a known read-only one."""
+    dashed = [a for a in args if a.startswith('-')]
+    return all(a in FINDOK or FINDNUM.fullmatch(a) for a in dashed)
+
+# sed -n with one line or a line range to print: 5p  5,10p  100,$p
+SEDPRINT = re.compile(r'([0-9]+|\$)(,([0-9]+|\$))?p')
+
+def sedok(args: List[str]) -> bool:
+    """True only for sed -n 'N,Mp' followed by file names."""
+    if len(args) < 2 or args[0] != '-n': return False
+    if not SEDPRINT.fullmatch(args[1]): return False
+    return not any(a.startswith('-') for a in args[2:])
+
+def dateok(args: List[str]) -> bool:
+    """True if date only prints. A bare date argument sets the clock."""
+    return all(a in ('-u', '-R') or a.startswith(('+', '-I')) for a in args)
+
+def hostnameok(args: List[str]) -> bool:
+    """True if hostname only prints. A name argument sets the host name."""
+    return all(a in ('-f', '-s') for a in args)
+
+# curl flags that only change how a fetch is followed or shown
+CURLFLAGS = {
+    '--silent', '--show-error', '--location', '--fail', '--include', '--head',
+    '--verbose', '--compressed'}
+# The same flags in short form, alone or joined: -s, -sL, -fsSL
+CURLSHORT = re.compile(r'-[sSLfiIv]+')
+# curl flags whose next word is a value that is sent or used, never written
+CURLVALUED = {
+    '-H', '--header', '-A', '--user-agent', '-m', '--max-time',
+    '--connect-timeout'}
+
+def curlok(args: List[str]) -> bool:
+    """True for a GET or HEAD of http(s) URLs that prints to the terminal."""
+    args, urls = list(args), 0
+    while args:
+        a = args.pop(0)
+        if a in CURLVALUED:
+            # A value like @file would send a local file
+            if not args or args.pop(0).startswith('@'): return False
+        elif a.startswith(('http://', 'https://')): urls += 1
+        elif a not in CURLFLAGS and not CURLSHORT.fullmatch(a): return False
+    return urls > 0
+
+# Check 1: git subcommands that only read
+GITRO = {
+    'status', 'log', 'diff', 'show', 'blame', 'ls-files', 'ls-tree',
+    'cat-file', 'branch'}
+# Check 2: options that write a file or run a program
+GITUNSAFE = ('--output', '--ext-diff', '--textconv', '--filters')
+# Check 3: branch options that only list branches
+GITBRANCHRO = {
+    '--list', '-l', '--show-current', '-a', '--all', '-r', '--remotes', '-v',
+    '-vv', '--verbose'}
+
+def gitunsafe(word: str) -> bool:
+    """True if word is a GITUNSAFE option, written in full or shortened."""
+    name = word.split('=')[0]
+    return len(name) > 2 and any(u.startswith(name) for u in GITUNSAFE)
+
+def gitok(args: List[str]) -> bool:
+    """True if a git command only reads. args are the words after 'git'."""
+    # Check 1: the first word must be a read-only subcommand
+    if not args or args[0] not in GITRO: return False
+    rest = args[1:]
+    # Check 2: no later word may be an unsafe option
+    if any(gitunsafe(w) for w in rest): return False
+    # Check 3: branch may only list
+    if args[0] != 'branch': return True
+    return all(w in GITBRANCHRO or w.startswith('--format=') for w in rest)
+
+# Characters that are literal in an unquoted shell word.
+# Not here, so they ask: $ ` ( ) { } < > # and newline
+PLAINCHARS = set(string.ascii_letters + string.digits + '_-./,:=@%+^~*?[]!')
+# Redirects that write no file: 2>/dev/null and 2>&1
+SAFEREDIRECT = re.compile(r'2>(/dev/null|&1)(?=[ \t|&;]|$)')
+
+def tokenizeshellcommand(command: str) -> Optional[List[List[str]]]:
+    """Splits a shell line into commands, each a list of finished words.
+    Allows plain words, quoted strings, | && || ; between commands, and
+    the redirects 2>/dev/null and 2>&1, which it skips.
+    Returns None for anything else: other redirects, $ expansions, backticks,
+    subshells, braces, comments, background &, newlines."""
+    commands, word, i = [[]], None, 0
+    while i < len(command):
+        c = command[i]
+        if c in ' \t|&;':
+            if word is not None: commands[-1].append(word); word = None
+            if c in '|&;':
+                if command[i:i + 2] in ('||', '&&'): i += 1
+                elif c == '&': return None
+                commands.append([])
+        elif c in '\'"':
+            end = command.find(c, i + 1)
+            if end < 0: return None
+            # Inside double quotes the shell still expands $ ` and \
+            if c == '"' and set(command[i:end]) & set('$`\\'): return None
+            word = (word or '') + command[i + 1:end]; i = end
+        elif c == '\\' and command[i + 1:i + 2] not in ('', '\n'):
+            word = (word or '') + command[i + 1]; i += 1
+        elif word is None and (m := SAFEREDIRECT.match(command, i)):
+            i = m.end() - 1
+        elif c in '*?[' and commands[-1] and commands[-1][0] in MAYBEUNSAFE:
+            # A glob can add words the check never sees, such as an option
+            # or a second file name
+            return None
+        elif c in PLAINCHARS or (c == '#' and word is not None):
+            word = (word or '') + c
+        else: return None
+        i += 1
+    if word is not None: commands[-1].append(word)
+    # An empty command means a stray operator, as in 'ls &&' or 'ls ;; pwd'
+    return commands if all(commands) else None
+
+# MAYBEUNSAFE command -> check that returns True if its arguments only read.
+# A MAYBEUNSAFE command with no check here always asks.
+ARGCHECKS = {
+    'curl': curlok, 'date': dateok, 'find': findok, 'git': gitok,
+    'hostname': hostnameok, 'rg': rgok, 'sed': sedok, 'sort': sortok,
+    'uniq': uniqok}
+
+def commandisreadonly(command: str) -> bool:
+    """True if a shell line is known to only read. Anything else asks."""
+    if not command.strip(): return True
+    commands = tokenizeshellcommand(command.strip())
+    if commands is None: return False
+    for name, *args in commands:
+        if name in MAYBEUNSAFE:
+            check = ARGCHECKS.get(name)
+            if not check or not check(args): return False
+        elif name not in ROLIST: return False
+    return True
 
 
 if __name__ == '__main__':
