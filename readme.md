@@ -1,8 +1,7 @@
 # ConsAI
 
-ConsAI is a terminal chat and coding assistant that connects to multiple AI
-models through OpenRouter. Models share a conversation, so you can switch
-between them, ask several for their views, or run a moderated debate.
+ConsAI is a terminal system administration and devops assistant that connects 
+to multiple AI models through OpenRouter. Models share a conversation, so you can switch between them, ask several for their views, or run a moderated debate.
 
 In normal chat, models can run local shell commands, edit files, search the
 web, and fetch web pages. You can also attach images, run commands yourself,
@@ -48,10 +47,8 @@ If neither option is configured, ConsAI prompts for the key at startup.
 The input is hidden and the key stays in memory for that session; ConsAI
 does not save it. An empty answer exits. Ctrl-C or Ctrl-D cancels the prompt.
 
-The existing shell variable takes precedence over `.env`. Surrounding
-whitespace is stripped from the key. `.env` is ignored by this repository's
-Git configuration. See the [OpenRouter quickstart](https://openrouter.ai/docs/quickstart)
-for API background.
+The existing shell variable takes precedence over `.env`. 
+`.env` is ignored by this repository's Git configuration. See the [OpenRouter quickstart](https://openrouter.ai/docs/quickstart) for API background.
 
 Start the program:
 

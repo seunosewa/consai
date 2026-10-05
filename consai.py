@@ -28,7 +28,6 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 
 # TODO: allow manual specification of reasoning intensity or allowed tokens. resets on model change
-# TODO: allow models to call other models such as gemini/claude 
 
 MODELS = {
     # Claude
@@ -84,10 +83,13 @@ load_dotenv()
 TEXTRO = ('cat', 'cut', 'diff', 'echo', 'fmt', 'grep', 'head', 'nl', 'paste', 'printf', 'rev', 'rg', 'sort', 'tail', 'tr', 'uniq', 'wc', 'sed', 'awk', 'jq')
 FSRO = ('cd', 'basename', 'cmp', 'comm', 'df', 'dirname', 'du', 'file', 'ls', 'pwd', 'realpath', 'stat', 'tree', 'find')
 SYSRO = ('cal', 'date', 'dmesg', 'history', 'hostname', 'id', 'lsof', 'man', 'ps', 'uname', 'uptime', 'who', 'whoami')
-NETRO = ('dig', 'host', 'netstat', 'ping', 'traceroute', 'curl')
-MISCRO = ('clear', 'false', 'less', 'more', 'seq', 'sleep', 'test', 'true', 'whereis', 'which', 'yes', 'ffprobe')
+NETRO = ('dig', 'host', 'netstat', 'ping', 'traceroute')
+MISCRO = ('clear', 'false', 'seq', 'sleep', 'test', 'true', 'whereis', 'which', 'yes', 'ffprobe')
 MACOSRO = ('jq',) # 'open', 'xargs' unsafe
 ROLIST = TEXTRO + FSRO + SYSRO + NETRO + MISCRO + MACOSRO
+MAYBEUNSAFE = ('curl', 'sort', 'uniq', 'sed', 'awk', 'rg', 'find', 'file', 'tree', 'date', 'dmesg', 'history', 'hostname', 'lsof', 'man', 'ffprobe')
+
+
 
 # Web tools that OpenRouter runs for the model (server tools).
 # Search: about $0.007 per call. Fetch: about $0.001 per page, capped in size.
@@ -2039,6 +2041,9 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
             self.always_approve = False
 
         print('\nGoodbye!')
+
+# INSERT MAYBEUNSAFE COMMAND FILTER HERE
+
 
 if __name__ == '__main__':
     app = CommandLineAIChat()
