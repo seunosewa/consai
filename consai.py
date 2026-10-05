@@ -19,7 +19,6 @@ import tty
 import pty
 import string
 
-from dotenv import load_dotenv
 from getpass import getpass
 from threading import Event
 from typing import Dict, List, Optional, Callable
@@ -77,7 +76,23 @@ class Colors:
     RESET = '\033[0m'
     BOLD = '\033[1m'
 
-load_dotenv()
+def loaddotenv():
+    folder = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(folder, '.env')
+    try:
+        with open(path, encoding='utf-8') as file:
+            for line in file:
+                line = line.strip()
+                if not line or line.startswith('#'): continue
+                key, sep, value = line.partition('=')
+                key, value = key.strip(), value.strip()
+                if not sep or not key: continue
+                if len(value) >= 2 and value[0] == value[-1]:
+                    if value[0] in "'\"": value = value[1:-1]
+                os.environ.setdefault(key, value)
+    except FileNotFoundError: pass
+
+loaddotenv()
 
 # Read-only command lists for security checks
 TEXTRO = ('cat', 'cut', 'diff', 'echo', 'fmt', 'grep', 'head', 'nl', 'paste', 'printf', 'rev', 'tail', 'tr', 'wc')

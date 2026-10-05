@@ -21,7 +21,7 @@ From the directory containing `consai.py`, install the dependencies:
 python3 -m pip install -r requirements.txt
 ```
 
-The dependencies are `prompt_toolkit`, `python-dotenv`, and `requests`.
+The dependencies are `prompt_toolkit` and `requests`.
 Commands the assistant runs also need their own programs installed, such as
 Git for repository work.
 
@@ -43,6 +43,14 @@ Otherwise, create a `.env` file beside `consai.py` containing:
 ```dotenv
 OPENROUTER_API_KEY=your-key-here
 ```
+
+The built-in loader reads `.env` only from the folder containing `consai.py`,
+regardless of the working directory. It does not search parent folders.
+It accepts one `KEY=value` setting per line, trims surrounding spaces, and
+removes matching single or double quotes around values. Blank lines and
+lines starting with `#` are ignored. It does not support `export` prefixes,
+inline comments, variable expansion, escape decoding, or multiline values.
+A missing `.env` file is ignored.
 
 If neither option is configured, ConsAI prompts for the key at startup.
 The input is hidden and the key stays in memory for that session; ConsAI
