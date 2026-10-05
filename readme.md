@@ -1,7 +1,7 @@
 # ConsAI
 
-ConsAI is a terminal chat and coding assistant that connects to multiple AI
-models through OpenRouter. Models share a conversation, so you can switch
+ConsAI is a terminal system admin and devops assistant that connects to multiple
+AI models through OpenRouter. Models share a conversation, so you can switch
 between them, ask several for their views, or run a moderated debate.
 
 In normal chat, models can run local shell commands, edit files, search the
