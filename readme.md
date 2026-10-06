@@ -2,7 +2,7 @@
 
 ConsAI is a terminal system admin and devops assistant that connects to multiple
 AI models through OpenRouter. Models share a conversation, so you can switch
-between them, ask several for their views, or run a moderated debate.
+between them or ask several for their views.
 
 In normal chat, models can run local shell commands, edit files, search the
 web, and fetch web pages. You can also attach images, run commands yourself,
@@ -169,7 +169,7 @@ All arguments are joined into one prompt. Model selection and `/ask` work
 here, and tool calls can still request approval. Use an interactive terminal
 when approval may be needed.
 
-Other interactive commands, including `!`, `/img`, `/debate`, `/stats`, and
+Other interactive commands, including `!`, `/img`, `/stats`, and
 `/clear`, are not dispatched in this mode. There is no command-line option
 parser: `--help` is treated as prompt text, not a help flag. Standard input
 is not loaded as the prompt.
@@ -277,45 +277,11 @@ are encoded as base64 and sent with the prompt.
 Repeated `/img` commands add to the pending queue. The next normal chat or
 `/ask` prompt consumes that queue; an empty prompt with pending images asks
 the model to describe them. Images in a normal conversation remain in its
-context after the queue is consumed. Debates do not consume pending images.
+context after the queue is consumed.
 
 Use `/imgclear` to discard queued images without sending them. Images
 already sent remain in the conversation. `/clear` removes both queued
 images and the conversation context, and resets session usage counters.
-
-## Moderated debates
-
-Start a debate with a topic, at least two participants, and optional
-positions and moderator:
-
-```text
-/debate Should this service use a queue? /mod:opus /sonnet Argue for a queue /astra Argue for direct calls
-```
-
-Put the topic before the first `/name` or `/mod:name`. Each participant's
-position runs until the next slash command. Omit a position to leave it
-unspecified. Without `/mod:name`, the last normal chat model moderates
-(`sonnet` initially). Choose a configured model for the moderator.
-
-Participants take turns in the order written. Before each turn, the
-moderator asks that participant a focused question. After two full rounds,
-ConsAI pauses for input. Press Enter to continue, type guidance to steer the
-debate, or enter `/end-debate` to finish. Ctrl-C during a response also opens
-a steering prompt.
-
-You can use custom participant names as personas; names not found in
-`MODELS` use the moderator's model:
-
-```text
-/debate How should we deploy? /mod:opus /builder Prioritise delivery speed /reviewer Prioritise reliability
-```
-
-Debates start with their own history and run without shell, edit, or web
-tools. They do not inherit the main chat context or normal `AGENTS.md`
-instructions. When finished, the moderator gives a summary, and the debate
-record and summary are added to the main conversation. Debate calls count
-toward session usage. `/end-debate` is recognised at debate input prompts,
-not as a normal chat command.
 
 ## Context, usage, and debugging
 
@@ -350,8 +316,6 @@ them does not affect billing.
 `/lastjson` makes no API call. It overwrites `/tmp/response.txt` when cached
 events exist. It prints the request body, not the authentication headers;
 the body may contain prompts, file content, tool results, or encoded images.
-Debate calls update the cached request but do not update the response-event
-cache, so after a debate those two views can refer to different requests.
 
 Conversation context lives in memory and is not restored when the program
 restarts. Typed interactive input is stored separately in
@@ -368,7 +332,7 @@ two-file lookup, not a search through every ancestor directory.
 
 Use those files for project conventions and instructions. Changing the
 files or using `! cd` changes what subsequent normal requests see.
-`/ask` requests and debates use their own system prompts instead.
+`/ask` requests use their own system prompt instead.
 
 Model and API settings are defined in `consai.py`:
 
@@ -389,10 +353,10 @@ It does not remove ConsAI's local input history or debug files.
 
 ## Interrupts and troubleshooting
 
-- **Stop a model:** press Ctrl-C while it is responding. In a debate, this
-  opens the steering prompt. During an interactive shell command, keystrokes
-  are forwarded to the child program. Use `exit` or Ctrl-D at the normal
-  prompt to quit; Ctrl-C at an input prompt can also exit.
+- **Stop a model:** press Ctrl-C while it is responding. During an
+  interactive shell command, keystrokes are forwarded to the child program.
+  Use `exit` or Ctrl-D at the normal prompt to quit; Ctrl-C at an input
+  prompt can also exit.
 - **Missing Python module:** run
   `python3 -m pip install -r requirements.txt` with the same interpreter used
   to launch ConsAI.

@@ -1175,76 +1175,6 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         if not self.interrupt_event.is_set():
             self._call_bot(bot_name)
 
-    def _parsedebate(self, text):
-        """Parse /debate args into (topic, [(bot, position), ...], moderator)."""
-        names = '|'.join(re.escape(n) for n in sorted(MODELS, key=len, reverse=True))
-        allpat = re.compile(rf'/(mod:)?({names}|\w+)(?=\s|$|[^\w])', re.IGNORECASE)
-        matches = list(allpat.finditer(text))
-        if not matches: return None, None, None
-        topic = text[:matches[0].start()].strip()
-        if not topic: return None, None, None
-        agents = []
-        moderator = None
-        for i, m in enumerate(matches):
-            end = matches[i+1].start() if i+1 < len(matches) else len(text)
-            pos = text[m.end():end].strip()
-            name = m.group(2).lower()
-            if m.group(1): moderator = name
-            else: agents.append((name, pos))
-        if len(agents) < 2: return None, None, None
-        return topic, agents, moderator
-
-    def _getdebatesystemprompt(self, botname, topic, position, allagents):
-        others = ', '.join(
-            f"{n.upper()} (arguing: {p})"
-            for n, p in allagents if n != botname
-        )
-        pos = position if position else '(unspecified)'
-        return (
-            f"You are {botname.upper()} in a structured debate.\n"
-            f"Topic: {topic}\n"
-            f"Your position: {pos}\n"
-            f"Other participants: {others}\n\n"
-            f"Argue persuasively for your position. Respond to "
-            f"previous arguments. Be concise (2-4 paragraphs).\n"
-            f"Never add <[:~{botname} said~:]> to your "
-            f"responses."
-        )
-
-    def _getmodsystemprompt(self, modname, topic, allagents, nextbotname=None):
-        participants = ', '.join(
-            f"{n.upper()} (arguing: {p})" if p else n.upper()
-            for n, p in allagents
-        )
-        addressline = (f"Address {nextbotname.upper()} directly. "
-                       f"Ask them 1 pointed question — the single most important "
-                       f"question that cuts to the heart of the matter.\n"
-                       if nextbotname else '')
-        return (
-            f"You are {modname.upper()} moderating a structured debate.\n"
-            f"Topic: {topic}\n"
-            f"Participants: {participants}\n\n"
-            f"Your role:\n"
-            f"- Identify the most important unaddressed points and weaknesses.\n"
-            f"- Steer toward the strongest, most substantive lines of argument.\n"
-            f"- Stay neutral. Do not argue for any position.\n"
-            f"- Be concise.\n"
-            f"{addressline}"
-            f"Never add <[:~{modname} said~:]> to your responses."
-        )
-
-    def _preparedebatemessages(self, botname, topic, position, allagents, debatehistory, systempromptoverride=None):
-        system = {'role': 'system', 'content': systempromptoverride or self._getdebatesystemprompt(botname, topic, position, allagents)}
-        formatted = []
-        for msg in debatehistory:
-            if msg['role'] == 'assistant' and 'bot_id' in msg:
-                label = f"<[:~{msg['bot_id']} said~:]>"
-                content = msg.get('content', '')
-                role = 'assistant' if msg['bot_id'] == botname else 'user'
-                formatted.append({'role': role, 'content': f"{label}\n{content}" if content else ''})
-            else: formatted.append(msg.copy())
-        return [system] + formatted
-
     def _stream_chat(self, url: str, headers: dict, payload: dict) -> dict:
         """Make HTTP POST and stream SSE response. Returns accumulated state."""
         data = json.dumps(payload, allow_nan=False).encode('utf-8')
@@ -1626,127 +1556,6 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         self.last_request_payload = payload
         return url, headers, payload
 
-    def _calldebatebot(self, botname, messages, ismoderator=False, modeloverride=None):
-        """Stripped-down _call_bot for debate: no tools, returns response text."""
-        modelkey = modeloverride or botname
-        color = Colors.MAGENTA if ismoderator else Colors.BLUE
-        print(f'\n{color}{botname.capitalize()}{Colors.RESET}:')
-        self.bot_running = True
-
-        for attempt, delay in enumerate([0] + self.retry_delays):
-            if self.interrupt_event.is_set():
-                self.bot_running = False
-                return ''
-            try:
-                if delay > 0: time.sleep(delay)
-                self.interrupt_event.clear()
-
-                url, headers, payload = self._prepare_request(modelkey, messages, include_tools=False)
-
-                result = self._stream_chat(url, headers, payload)
-                
-                if result['last_usage']:
-                    self._record_and_print_usage(botname, result['last_usage'])
-                self.bot_running = False
-                return self._strip_said_tags(result['full_response']).strip()
-
-            except Exception as e:
-                errmsg = f'API call to {botname.capitalize()} failed (attempt {attempt + 1})'
-                print(f'\n{Colors.RED}{errmsg}. Details: {e}{Colors.RESET}')
-                print(f'{Colors.GREY}Stack trace:\n{traceback.format_exc()}{Colors.RESET}')
-                if attempt < len(self.retry_delays):
-                    print(f'{Colors.GREY}Retrying in {self.retry_delays[attempt]}s...{Colors.RESET}')
-                else:
-                    print(f'{Colors.RED}Giving up after {attempt + 1} attempts.{Colors.RESET}')
-                    break
-
-        self.bot_running = False
-        return ''
-
-    def _rundebate(self, topic, agents, moderator=None):
-        predebatebot = self.last_bot_name
-        moderator = moderator or predebatebot
-        debatehistory = []
-        numagents = len(agents)
-
-        print(f"\n{Colors.BOLD}=== DEBATE ==={Colors.RESET}")
-        print(f"Topic: {topic}")
-        print(f"  {Colors.MAGENTA}MOD: {moderator.upper()}{Colors.RESET}")
-        for name, pos in agents:
-            print(f"  {Colors.BLUE}{name.upper()}{Colors.RESET}: {pos}" if pos else f"  {Colors.BLUE}{name.upper()}{Colors.RESET}")
-        print(f"{Colors.GREY}Ctrl-C to interrupt and steer. /end-debate to finish.{Colors.RESET}")
-
-        def _callmod(nextbotname):
-            modprompt = self._getmodsystemprompt(moderator, topic, agents, nextbotname=nextbotname)
-            msgs = self._preparedebatemessages(moderator, topic, None, agents, debatehistory, systempromptoverride=modprompt)
-            self.interrupt_event.clear()
-            resp = self._calldebatebot(moderator, msgs, ismoderator=True)
-            if resp:
-                debatehistory.append({'role': 'assistant', 'content': resp, 'bot_id': moderator})
-
-        def _handleinterrupt():
-            """Called after ctrl-c. Returns True if debate should end."""
-            userinput = self._get_user_input()
-            if userinput is None or userinput.lower() == 'exit': return True
-            if userinput.strip().lower() == '/end-debate': return True
-            if userinput.strip():
-                debatehistory.append({'role': 'user', 'content': userinput.strip()})
-            return False
-
-        # Flow: mod(→speaker1) → speaker1 → mod(→speaker2) → speaker2 → ...
-        done = False
-        idx = 0
-        turncount = 0
-        while not done:
-            botname, position = agents[idx]
-            override = moderator if botname not in MODELS else None
-            # Moderator addresses current speaker
-            _callmod(botname)
-            if self.interrupt_event.is_set():
-                self.interrupt_event.clear()
-                turncount = 0
-                if _handleinterrupt():
-                    done = True; continue
-            # Debater speaks
-            msgs = self._preparedebatemessages(botname, topic, position, agents, debatehistory)
-            self.interrupt_event.clear()
-            resp = self._calldebatebot(botname, msgs, modeloverride=override)
-            if resp:
-                debatehistory.append({'role': 'assistant', 'content': resp, 'bot_id': botname})
-            if self.interrupt_event.is_set():
-                self.interrupt_event.clear()
-                turncount = 0
-                if _handleinterrupt():
-                    done = True; continue
-            turncount += 1
-            if turncount >= numagents * 2:
-                turncount = 0
-                if _handleinterrupt():
-                    done = True; continue
-            idx = (idx + 1) % numagents
-
-        # Summary phase
-        print(f"\n{Colors.BOLD}=== DEBATE SUMMARY ==={Colors.RESET}")
-        summaryprompt = (
-            f"Summarize this debate on '{topic}'. "
-            f"Cover each participant's key arguments, "
-            f"points of agreement/disagreement, and your assessment.")
-        debatehistory.append({'role': 'user', 'content': summaryprompt})
-        modprompt = self._getmodsystemprompt(moderator, topic, agents)
-        msgs = self._preparedebatemessages(moderator, topic, None, agents, debatehistory, systempromptoverride=modprompt)
-        self.interrupt_event.clear()
-        summary = self._calldebatebot(moderator, msgs, ismoderator=True)
-
-        # Append condensed record to main history
-        record = f"[Debate on: {topic}]\n"
-        for entry in debatehistory:
-            if entry['role'] == 'assistant':
-                record += f"{entry.get('bot_id', '').upper()}: {entry['content']}\n\n"
-            elif entry['role'] == 'user' and entry['content'] != summaryprompt:
-                record += f"User: {entry['content']}\n\n"
-        if summary: record += f"Summary by {moderator.upper()}: {summary}"
-        self.conversation_history.append({'role': 'assistant', 'content': record, 'bot_id': moderator})
-
     def _call_bot(self, bot_name, ask_mode: bool = False):
         self.last_bot_name = bot_name
         messages = self._prepare_messages(bot_name, ask_mode)
@@ -1901,7 +1710,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         print(f"{Colors.BOLD}Welcome!{Colors.RESET}")
         print(f"  OpenRouter: {or_line}")
         print("Type 'exit' to quit, or 'BEGIN' to start multi-line input (end with 'END').")
-        print(f"{Colors.GREY}Commands: /clear /stats /lastjson /img /imgclear /debate [/mod:bot] <query>{Colors.RESET}")
+        print(f"{Colors.GREY}Commands: /clear /stats /lastjson /img /imgclear{Colors.RESET}")
 
         while True:
             user_text = self._get_user_input()
@@ -2015,14 +1824,6 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                 else:
                     print('Nothing to revert.')
                 # Do not add this input to history or call any bot
-                continue
-
-            if user_text.strip().lower().startswith('/debate'):
-                topic, agents, moderator = self._parsedebate(user_text.strip()[7:])
-                if topic and agents:
-                    self._rundebate(topic, agents, moderator)
-                else:
-                    print("Usage: /debate <topic> [/mod:bot] /name1 position1 /name2 position2 [...]")
                 continue
 
             cleaned_text, bots_to_call, ask_mode = self._parse_input(user_text)
