@@ -41,6 +41,9 @@ MODELS = {
     # Unbiased
     'pareto': {'name': 'unbiased/pareto-26.10-preview'}, # very good for explaining concepts.
 
+    # Grok
+    'grok': {'name': '~x-ai/grok-latest', 'reasoning': 'medium'},
+
     # GLM
     'glmflash':  {'name': '~z-ai/glm-flash-latest', 'reasoning': 'medium'},
     'glm': {'name': '~z-ai/glm-latest', 'reasoning': 'medium'},
@@ -87,7 +90,8 @@ def loaddotenv():
                 if not line or line.startswith('#'): continue
                 key, sep, value = line.partition('=')
                 key, value = key.strip(), value.strip()
-                if not sep or not key: continue
+                # Other keys stay out of the environment that commands inherit
+                if not sep or key != 'OPENROUTER_API_KEY': continue
                 if len(value) >= 2 and value[0] == value[-1]:
                     if value[0] in "'\"": value = value[1:-1]
                 os.environ.setdefault(key, value)
@@ -1573,10 +1577,6 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         provider = MODELS[model_key].get('provider', 'openrouter')
 
         if provider == 'openrouter':
-            if not self.openrouter_api_key:
-                print(f"{Colors.RED}Error: OPENROUTER_API_KEY environment variable not set.{Colors.RESET}")
-                raise Exception("OPENROUTER_API_KEY not set")
-
             headers = {
                 'Authorization': f'Bearer {self.openrouter_api_key}',
                 'Content-Type': 'application/json',
@@ -1599,9 +1599,10 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                               'together', # deepseek, qwen
                               'fireworks', # kimi
                               'novita', # mimo
+                              'cloudflare', # reliable
                               'deepinfra', # generally fast and cheap
                     ],
-                    'allow_fallbacks': False,
+                    'allow_fallbacks': True,
                 },
                 'temperature': 0.6
             }
@@ -2271,6 +2272,9 @@ def commandisreadonly(command: str) -> bool:
     commands = tokenizeshellcommand(command.strip())
     if commands is None: return False
     for name, *args in commands:
+        # A .env file holds secret keys, so a command that names one asks
+        if any(os.path.basename(a).startswith('.env') for a in args):
+            return False
         if name in MAYBEUNSAFE:
             check = ARGCHECKS.get(name)
             if not check or not check(args): return False

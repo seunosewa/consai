@@ -47,6 +47,8 @@ OPENROUTER_API_KEY=your-key-here
 
 The built-in loader reads `.env` only from the folder containing `consai.py`,
 regardless of the working directory. It does not search parent folders.
+It loads only `OPENROUTER_API_KEY` and ignores every other setting, so other
+keys in the file do not reach the commands ConsAI runs.
 It accepts one `KEY=value` setting per line, trims surrounding spaces, and
 removes matching single or double quotes around values. Blank lines and
 lines starting with `#` are ignored. It does not support `export` prefixes,
@@ -187,8 +189,9 @@ results arrive:
 
 - **Shell:** run local commands and return their output to the conversation.
   Commands classified as likely read-only run automatically; other commands
-  request approval. AI commands set `GIT_PAGER=cat` so Git output does not
-  wait for pager input.
+  request approval. A command that names a `.env` file is never classified
+  as read-only. AI commands set `GIT_PAGER=cat` so Git output does not wait
+  for pager input.
 - **Edit:** replace exact text in an existing UTF-8 file. ConsAI shows a
   coloured diff before approval. The match must be unique unless the model
   requests replacement of all occurrences. The edit is rejected if the file
