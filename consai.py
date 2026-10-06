@@ -4,6 +4,7 @@ import difflib
 import os
 import platform
 import re
+import readline
 import mimetypes
 import shlex
 import signal
@@ -24,9 +25,6 @@ from typing import Dict, List, Optional, Callable
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from prompt_toolkit import PromptSession
-from prompt_toolkit.history import FileHistory
-
 # TODO: allow manual specification of reasoning intensity or allowed tokens. resets on model change
 
 MODELS = {
@@ -39,7 +37,7 @@ MODELS = {
     'astra':      {'name': '~openai/gpt-astra-latest', 'reasoning': 'medium'},
 
     # Unbiased
-    'pareto': {'name': 'unbiased/pareto-26.10-preview'}, # very good for explaining concepts.
+    'pareto': {'name': 'unbiased/pareto-26.10-preview'}, # very good at explaining concepts
 
     # Grok
     'grok': {'name': '~x-ai/grok-latest', 'reasoning': 'medium'},
@@ -152,91 +150,30 @@ def get_single_key():
             # Ultimate fallback - use input()
             return input().lower()
 
-def _tokenize_shell_command(command: str) -> Optional[List[str]]:
-    """Tokenizes a shell command using shlex, preserving operators and merging '&&'/'||'."""
-    try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=';|&')
-        lexer.whitespace_split = True
-        raw_tokens = list(lexer)
+HISTFILE = os.path.expanduser('~/.consai_history')
 
-        # Merge && and || back together
-        tokens = []
-        i = 0
-        while i < len(raw_tokens):
-            tok = raw_tokens[i]
-            if i + 1 < len(raw_tokens) and raw_tokens[i + 1] == tok and tok in {'&', '|'}:
-                tokens.append(tok * 2)  # '&&' or '||'
-                i += 2
-            else:
-                tokens.append(tok)
-                i += 1
-        return tokens
-    except ValueError:
-        return None
+def initreadline():
+    """Turns on multi-line paste and loads ~/.consai_history into readline."""
+    readline.parse_and_bind('set enable-bracketed-paste on')  # off in Python
+    if not os.path.exists(HISTFILE): return
+    entry = []
+    with open(HISTFILE, encoding='utf-8', errors='replace') as f:
+        for line in [*f, '']:
+            if line.startswith('+'): entry.append(line[1:]); continue
+            if entry: readline.add_history(''.join(entry)[:-1]); entry = []
 
-def command_is_readonly(command: str) -> bool:
-    """Check if a shell command is likely to be read-only."""
-    if not (command := command.strip()):
-        return True
-
-    tokens = _tokenize_shell_command(command)
-    if tokens is None:
-        return False
-
-    if not tokens:
-        return True
-
-    unsafe_operators = ['>', '>>', '<<', '<<<', '>&', '<&', '2>', '2>>']
-    if any(op in tokens for op in unsafe_operators):
-        return False
-
-    commands = [[]]
-    for token in tokens:
-        if token in ['|', '&&', '||', ';']:
-            commands.append([])
-        else:
-            commands[-1].append(token)
-
-    for cmd_tokens in commands:
-        if not cmd_tokens:
-            continue
-        base_command = cmd_tokens[0]
-        if base_command == 'git' and len(cmd_tokens) > 1 and cmd_tokens[1] not in {
-              'status', 'diff', 'ls-files', 'ls-tree', 'log', 'show', 'blame', 'cat-file', 'ls-remote'
-            }: return False
-        elif base_command == 'curl' and any(flag in cmd_tokens for flag in {'-X', '-d', '--data', '-F', '--form', '-T', '--upload-file', '-o', '--output'}):
-            return False
-        elif base_command in ('awk', 'sed') and any(flag in cmd_tokens for flag in {'-i', '--in-place'}):
-            return False
-        elif base_command == 'find' and any(action in cmd_tokens for action in {'-delete'}):
-            return False
-        elif base_command == 'find' and '-exec' in cmd_tokens:
-            # Analyze the command being executed by find -exec
-            exec_index = cmd_tokens.index('-exec')
-            # Find the command after -exec (skip -exec itself)
-            if exec_index + 1 < len(cmd_tokens):
-                exec_command = cmd_tokens[exec_index + 1]
-                # Check if the executed command is read-only
-                if exec_command not in ROLIST:
-                    return False
-                # Also check if the exec command has any unsafe flags
-                exec_cmd_tokens = cmd_tokens[exec_index + 1:]
-                if ';' in exec_cmd_tokens:
-                    semicolon_index = exec_cmd_tokens.index(';')
-                    exec_cmd_tokens = exec_cmd_tokens[:semicolon_index]
-                
-                # Check the executed command for safety
-                if exec_command == 'grep' and any(flag in exec_cmd_tokens for flag in {'-l', '-n', '-c', '-i', '-v', '-E', '-F'}):
-                    # grep with read-only flags is safe
-                    continue
-                elif exec_command in TEXTRO + FSRO + SYSRO + NETRO + MISCRO + MACOSRO:
-                    # Safe commands executed via -exec
-                    continue
-                else:
-                    return False
-        elif base_command not in ROLIST:
-            return False
-    return True
+def readinput(default=''):
+    """input() with readline editing, prefill text and saved history."""
+    n = readline.get_current_history_length()
+    readline.set_startup_hook(lambda: readline.insert_text(default))
+    handler = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try: text = input()
+    finally: signal.signal(signal.SIGINT, handler); readline.set_startup_hook()
+    if readline.get_current_history_length() == n: return text
+    lines = ''.join(f'+{line}\n' for line in text.split('\n'))
+    with open(HISTFILE, 'a', encoding='utf-8') as f:
+        f.write(f'\n# {time.strftime("%Y-%m-%d %H:%M:%S")}\n{lines}')
+    return text
 
 def _sanitize_tool_id(tool_id: str) -> str:
     """Sanitize a tool call ID to conform to ^[a-zA-Z0-9_-]+$ pattern required by some providers."""
@@ -304,7 +241,6 @@ class CommandLineAIChat:
     """A command-line AI chat application using the OpenRouter library for various models."""
 
     def __init__(self):
-        self.client = None
         self.conversation_history: List[Dict[str, str]] = []
         self.needs_prefix_reminder = False
         self.last_bot_name = 'sonnet'
@@ -319,8 +255,7 @@ class CommandLineAIChat:
         self.session_total_tokens = 0
         self.session_reasoning_tokens = 0
         self.session_cached_tokens = 0
-        self.previous_cwd = os.getcwd()
-        self.prompt_session = PromptSession(history=FileHistory(os.path.expanduser('~/.consai_history')))
+        initreadline()
         self.prefill_shell_mode = False
         self.last_request_payload: Optional[Dict] = None
         self.last_response_events: Optional[List[Dict]] = None
@@ -331,7 +266,11 @@ class CommandLineAIChat:
             'type': 'function',
             'function': {
                 'name': 'executeshell',
-                'description': 'Executes a shell command and returns its output.',
+                'description': 'Executes a shell command and returns its output. '
+                               'Commands always run in the current working directory. '
+                               'Never use cd; give paths relative to it. '
+                               'Commands with loops or variables always need approval; '
+                               'prefer plain commands.',
                 'parameters': {
                     'type': 'object',
                     'properties': {
@@ -405,42 +344,6 @@ class CommandLineAIChat:
             print(f"\n{Colors.GREY}Type 'exit' or ctrl-d to quit{Colors.RESET}")
             print(f'{Colors.GREEN}User{Colors.RESET}:\n', end='', flush=True)
 
-    def _format_context_for_gemini(self, max_messages: int = 5) -> str:
-        """Format recent conversation history as context for Gemini CLI calls.
-        
-        Returns a string suitable for inclusion in a Gemini query.
-        """
-        if not self.conversation_history:
-            return "No prior context."
-        
-        # Get last N messages
-        recent = self.conversation_history[-max_messages:]
-        context_lines = []
-        
-        for msg in recent:
-            role = msg.get('role', 'unknown')
-            content = _content_to_text(msg.get('content')).strip()
-            
-            # Skip empty messages
-            if not content:
-                continue
-            
-            # Truncate very long messages
-            if len(content) > 200:
-                content = content[:200] + "..."
-            
-            # Format based on role
-            if role == 'user':
-                context_lines.append(f"User: {content}")
-            elif role == 'assistant':
-                bot_id = msg.get('bot_id', 'assistant')
-                context_lines.append(f"{bot_id.upper()}: {content}")
-            elif role == 'tool':
-                # Summarize tool output
-                context_lines.append(f"[Tool executed, output truncated]")
-        
-        return "\n".join(context_lines) if context_lines else "No relevant context."
-
     def _get_system_prompt(self, bot_name: str, ask_mode: bool = False) -> str:
         if ask_mode:
             return f"You are {bot_name}, a helpful AI assistant. Answer the question clearly."
@@ -474,7 +377,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         return r
 
     def _get_user_input(self):
-        """Gets input from the user using prompt_toolkit for a better experience."""
+        """Gets input from the user with readline editing and history."""
         try:
             # Print the "User:" label on its own line first
             print(f'\n{Colors.GREEN}User:{Colors.RESET}')
@@ -488,7 +391,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
             default_text = '!' if self.prefill_shell_mode else ''
 
             # Get user input using the session with an empty message string
-            user_text = self.prompt_session.prompt('', default=default_text)
+            user_text = readinput(default_text)
 
             # Handle multi-line input using a simple check
             if user_text.strip() == 'BEGIN':
@@ -496,7 +399,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                 lines = []
                 while True:
                     try:
-                        line = self.prompt_session.prompt('') # No prompt for subsequent lines
+                        line = readinput()
                         if line.strip() == 'END':
                             break
                         lines.append(line)
@@ -510,7 +413,6 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         except (EOFError, KeyboardInterrupt):
             print("\nGoodbye!")
             sys.exit(0)
-            return None
 
     def _parse_input(self, user_text):
         """Parse input, keeping models in order of first appearance."""
@@ -657,7 +559,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         except OSError as e: return f'Error writing {path}: {e}'
         return f'Edited {path}: replaced {n} occurrence(s).'
 
-    def _executeshell_command(self, command: str, on_chunk: Optional[Callable[[str], None]] = None, originatedby: str = 'ai', echo_command: bool = True) -> str:
+    def _executeshell_command(self, command: str, on_chunk: Optional[Callable[[str], None]] = None, originatedby: str = 'ai') -> str:
         """Executes a shell command after checking if it's safe.
 
         - Always attempts to run with a PTY (interactive-capable). If stdin is a TTY, keystrokes
@@ -667,9 +569,12 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         - When using the non-PTY streaming path, a 60s timeout is enforced.
         - If `on_chunk` is provided, output is streamed to the callback while accumulating the transcript.
         """
-        if echo_command:
+        ask = originatedby == 'ai' and not commandisreadonly(command)
+        # Show the command right above its prompt. The streamed copy can be
+        # far up the screen, behind the usage line or other commands' output.
+        if ask and not self.always_approve:
             print(f'\n{Colors.YELLOW}{command}{Colors.RESET}')
-        if originatedby == 'ai' and not commandisreadonly(command) and not self._approve('Run this command?'):
+        if ask and not self._approve('Run this command?'):
             return 'Command execution cancelled by user.'
         # AI commands: no pager, so git prints and exits without waiting
         env = {**os.environ, 'GIT_PAGER': 'cat'} if originatedby == 'ai' else None
@@ -810,93 +715,6 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         except Exception as e:
             traceback.print_exc()
             return f'Error executing command: {e}'
-
-    def _change_directory(self, target: Optional[str], on_chunk: Optional[Callable[[str], None]] = None) -> tuple[bool, str]:
-        """Change current working directory in-process. Returns (success, transcript)."""
-        old_cwd = os.getcwd()
-        try:
-            if target is None or target.strip() == '':
-                new_dir = os.path.expanduser('~')
-            elif target == '-':
-                # Swap with previous directory if available
-                prev = self.previous_cwd or os.environ.get('OLDPWD') or old_cwd
-                new_dir = prev
-            else:
-                new_dir = os.path.expanduser(os.path.expandvars(target))
-
-            os.chdir(new_dir)
-            # Update previous directory tracking
-            self.previous_cwd, os.environ['OLDPWD'] = old_cwd, old_cwd
-            msg = f"cwd: {os.getcwd()}\n"
-            if on_chunk:
-                try:
-                    on_chunk(msg)
-                except Exception:
-                    pass
-            return True, msg
-        except Exception as e:
-            msg = f"cd: {target if target else ''}: {e}\n"
-            if on_chunk:
-                try:
-                    on_chunk(msg)
-                except Exception:
-                    pass
-            return False, msg
-
-    def _maybe_handle_cd_and_execute(self, command: str, on_chunk: Optional[Callable[[str], None]], originatedby: str, echo_command: bool = True) -> Optional[str]:
-        """If command starts with a cd, handle it in-process and optionally execute trailing command.
-
-        Supports forms:
-          cd
-          cd path
-          cd -
-          cd path && rest
-          cd path ; rest
-        Returns the full transcript if handled, else None.
-        """
-        tokens = _tokenize_shell_command(command)
-        if tokens is None:
-            return None
-
-        if not tokens or tokens[0] != 'cd':
-            return None
-
-        # Parse target and optional separator+rest
-        target: Optional[str] = None
-        sep: Optional[str] = None
-        rest_tokens: List[str] = []
-
-        j = 1
-        if j < len(tokens) and tokens[j] not in {';', '&&', '||'}:
-            target = tokens[j]
-            j += 1
-        if j < len(tokens) and tokens[j] in {';', '&&'}:  # ignore || for simplicity
-            sep = tokens[j]
-            j += 1
-            rest_tokens = tokens[j:]
-
-        # Change directory
-        success, cd_msg = self._change_directory(target, on_chunk=on_chunk)
-
-        transcript_parts: List[str] = [cd_msg]
-
-        # Execute trailing command depending on separator rules
-        if rest_tokens and (sep == ';' or (sep == '&&' and success)):
-            # Reconstruct rest command with proper quoting
-            def rejoin(ts: List[str]) -> str:
-                out: List[str] = []
-                for t in ts:
-                    if t in {';', '&&', '||', '|'}:
-                        out.append(t)
-                    else:
-                        out.append(shlex.quote(t))
-                return ' '.join(out)
-
-            rest_command = rejoin(rest_tokens)
-            rest_output = self._executeshell_command(rest_command, on_chunk=on_chunk, originatedby=originatedby, echo_command=echo_command)
-            transcript_parts.append(rest_output)
-
-        return ''.join(transcript_parts)
 
     def _run_command_interactive_pty(self, command: str, on_chunk: Optional[Callable[[str], None]], env: Optional[Dict[str, str]] = None) -> str:
         """Run command attached to a PTY, forwarding keystrokes and streaming output.
@@ -1117,12 +935,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                             # Always print raw to avoid breaking TUIs
                             print(text, end='', flush=True)
 
-                        # First, check for an in-process cd (and optional trailing command)
-                        handled = self._maybe_handle_cd_and_execute(command, on_chunk=_print_stream_chunk, originatedby='ai', echo_command=False)
-                        if handled is not None:
-                            output = handled
-                        else:
-                            output = self._executeshell_command(command, on_chunk=_print_stream_chunk, echo_command=False)
+                        output = self._executeshell_command(command, on_chunk=_print_stream_chunk)
                         tool_message = {
                             'role': 'tool',
                             'tool_call_id': _sanitize_tool_id(tool_call['id']),
@@ -1523,7 +1336,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                     'zdr': True,
                     'sort': 'latency',
                     'order': ['amazon-bedrock', 'google-vertex', # for anthropic
-                              'azure', 'azure/eu', 'azure/us', # for openai
+                              'azure', # for openai
                               'unbiased', # for pareto
                               'z-ai', # glm
                               'together', # deepseek, qwen
@@ -1726,12 +1539,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                     # Stream output immediately to the console; skip approval for this explicit path
                     def _print_direct(text: str) -> None:
                         print(f"{text}", end='', flush=True)
-                    # Handle in-process cd (and optional trailing command) first
-                    handled = self._maybe_handle_cd_and_execute(raw_cmd, on_chunk=_print_direct, originatedby='user')
-                    if handled is None:
-                        output = self._executeshell_command(raw_cmd, on_chunk=_print_direct, originatedby='user', echo_command=False)
-                    else:
-                        output = handled
+                    output = self._executeshell_command(raw_cmd, on_chunk=_print_direct, originatedby='user')
                     # Record into conversation history so AI can see direct shell activity
                     try:
                         self.conversation_history.append({'role': 'user', 'content': f'! {raw_cmd}\n{output}'.rstrip()})
@@ -1993,7 +1801,7 @@ def curlok(args: List[str]) -> bool:
 # Check 1: git subcommands that only read
 GITRO = {
     'status', 'log', 'diff', 'show', 'blame', 'ls-files', 'ls-tree',
-    'cat-file', 'branch'}
+    'cat-file', 'branch', 'version', '--version'}
 # Check 2: options that write a file or run a program
 GITUNSAFE = ('--output', '--ext-diff', '--textconv', '--filters')
 # Check 3: branch options that only list branches
@@ -2022,6 +1830,9 @@ def gitok(args: List[str]) -> bool:
 PLAINCHARS = set(string.ascii_letters + string.digits + '_-./,:=@%+^~*?[]!')
 # Redirects that write no file: 2>/dev/null and 2>&1
 SAFEREDIRECT = re.compile(r'2>(/dev/null|&1)(?=[ \t|&;]|$)')
+# Inside double quotes the shell expands $ and `, and \ escapes only
+# $ ` " \ and newline. Any other \ stays as typed.
+DQBAD = re.compile(r'[$`]|\\[$`"\\\n]')
 
 def tokenizeshellcommand(command: str) -> Optional[List[List[str]]]:
     """Splits a shell line into commands, each a list of finished words.
@@ -2041,8 +1852,7 @@ def tokenizeshellcommand(command: str) -> Optional[List[List[str]]]:
         elif c in '\'"':
             end = command.find(c, i + 1)
             if end < 0: return None
-            # Inside double quotes the shell still expands $ ` and \
-            if c == '"' and set(command[i:end]) & set('$`\\'): return None
+            if c == '"' and DQBAD.search(command, i + 1, end + 1): return None
             word = (word or '') + command[i + 1:end]; i = end
         elif c == '\\' and command[i + 1:i + 2] not in ('', '\n'):
             word = (word or '') + command[i + 1]; i += 1

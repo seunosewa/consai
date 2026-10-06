@@ -15,14 +15,9 @@ and an OpenRouter API key. The program imports Unix terminal modules such as
 `termios` and `pty`, so run it inside WSL rather than native Windows Python.
 API calls require an internet connection and available OpenRouter credits.
 
-From the directory containing `consai.py`, install the dependencies:
-
-```sh
-python3 -m pip install -r requirements.txt
-```
-
-The only external Python dependency is `prompt_toolkit`. HTTP requests and
-streaming use Python's built-in `urllib.request`.
+ConsAI has no external Python dependencies. Input editing and history use
+Python's built-in `readline`; HTTP requests and streaming use the built-in
+`urllib.request`.
 Commands the assistant runs also need their own programs installed, such as
 Git for repository work.
 
@@ -135,8 +130,8 @@ END
 ```
 
 The terminal supports input editing and persistent input history through
-`prompt_toolkit`. Responses stream as they arrive; reasoning text is shown
-in grey when the provider supplies it.
+Python's built-in `readline`. Responses stream as they arrive; reasoning text
+is shown in grey when the provider supplies it.
 
 ### Ask outside the current conversation
 
@@ -357,9 +352,8 @@ It does not remove ConsAI's local input history or debug files.
   interactive shell command, keystrokes are forwarded to the child program.
   Use `exit` or Ctrl-D at the normal prompt to quit; Ctrl-C at an input
   prompt can also exit.
-- **Missing Python module:** run
-  `python3 -m pip install -r requirements.txt` with the same interpreter used
-  to launch ConsAI.
+- **Missing `readline` module:** use a Python built with GNU readline, such
+  as the system `python3` on Ubuntu or Debian.
 - **`termios` import error on Windows:** run the program with Python inside
   WSL.
 - **API error:** read the status and error body printed in the terminal.
