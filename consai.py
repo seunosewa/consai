@@ -102,10 +102,10 @@ TEXTRO = ('cat', 'cut', 'diff', 'echo', 'fmt', 'grep', 'head', 'nl', 'paste', 'p
 FSRO = ('basename', 'cd', 'cmp', 'comm', 'df', 'dirname', 'du', 'ls', 'pwd', 'realpath', 'stat')
 SYSRO = ('cal', 'id', 'ps', 'uname', 'uptime', 'who', 'whoami')
 NETRO = ('dig', 'host', 'netstat', 'ping', 'traceroute')
-MISCRO = ('clear', 'false', 'seq', 'sleep', 'test', 'true', 'whereis', 'which', 'yes')
+MISCRO = ('clear', 'false', 'seq', 'sleep', 'test', 'true', 'type', 'whereis', 'which', 'yes')
 MACOSRO = ('jq',) # 'open', 'xargs' unsafe
 ROLIST = TEXTRO + FSRO + SYSRO + NETRO + MISCRO + MACOSRO
-MAYBEUNSAFE = ('awk', 'curl', 'date', 'dmesg', 'ffprobe', 'file', 'find', 'git', 'history', 'hostname', 'lsof', 'man', 'rg', 'sed', 'sort', 'tree', 'uniq')
+MAYBEUNSAFE = ('awk', 'command', 'curl', 'date', 'dmesg', 'ffprobe', 'file', 'find', 'git', 'history', 'hostname', 'lsof', 'man', 'rg', 'sed', 'sort', 'tree', 'uniq')
 
 
 # Web tools that OpenRouter runs for the model (server tools).
@@ -269,8 +269,9 @@ class CommandLineAIChat:
                 'description': 'Executes a shell command and returns its output. '
                                'Commands always run in the current working directory. '
                                'Never use cd; give paths relative to it. '
-                               'Commands with loops or variables always need approval; '
-                               'prefer plain commands.',
+                               'Read-only commands run without approval. Commands that '
+                               'write, or use loops or variables, need approval; '
+                               'prefer plain read-only commands.',
                 'parameters': {
                     'type': 'object',
                     'properties': {
@@ -576,8 +577,9 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
             print(f'\n{Colors.YELLOW}{command}{Colors.RESET}')
         if ask and not self._approve('Run this command?'):
             return 'Command execution cancelled by user.'
-        # AI commands: no pager, so git prints and exits without waiting
-        env = {**os.environ, 'GIT_PAGER': 'cat'} if originatedby == 'ai' else None
+        # AI commands: no pager, so git and man print and exit without waiting
+        pagers = {'GIT_PAGER': 'cat', 'MANPAGER': 'cat'}
+        env = {**os.environ, **pagers} if originatedby == 'ai' else None
 
         # Always attempt interactive PTY mode: allocate a TTY and forward keystrokes + output
         try:
@@ -1870,12 +1872,47 @@ def tokenizeshellcommand(command: str) -> Optional[List[List[str]]]:
     # An empty command means a stray operator, as in 'ls &&' or 'ls ;; pwd'
     return commands if all(commands) else None
 
+def awkok(args: List[str]) -> bool:
+    """True if awk only prints. In a program, > writes a file and | or
+    system() runs a program. -f hides the program in a file."""
+    if not flagsok(args, '', 'Fv'): return False
+    return not any(re.search(r'[>|]|system', a) for a in args)
+
+FILELONG = {
+    '--brief', '--checking-printout', '--debug', '--dereference', '--exclude',
+    '--exclude-quiet', '--extension', '--files-from', '--help', '--keep-going',
+    '--list', '--magic-file', '--mime', '--mime-encoding', '--mime-type',
+    '--no-buffer', '--no-dereference', '--no-pad', '--no-sandbox',
+    '--parameter', '--preserve-date', '--print0', '--raw', '--separator',
+    '--special-files', '--uncompress', '--uncompress-noreport', '--version'}
+
+def fileok(args: List[str]) -> bool:
+    """True if file only reads. -C or --compile writes a magic.mgc file."""
+    return flagsok(args, 'bcDdhIiklLNnprSsvZz0', 'eFfMmP', FILELONG)
+
+def manok(args: List[str]) -> bool:
+    """True if man only reads. -P runs any program as the pager."""
+    return flagsok(args, 'adfhkow', 'MmS')
+
+def ffprobeok(args: List[str]) -> bool:
+    """True if ffprobe prints. -o writes a file and -report writes a log."""
+    return not any(a in ('-o', '-report') for a in args)
+
+def lsofok(args: List[str]) -> bool:
+    """True if lsof only reads. Linux lsof -D can write a device cache."""
+    return not any(a.startswith('-') and 'D' in a[1:] for a in args)
+
+def commandok(args: List[str]) -> bool:
+    """True if command only looks names up. Without -v or -V it runs one."""
+    return args[:1] in (['-v'], ['-V'])
+
 # MAYBEUNSAFE command -> check that returns True if its arguments only read.
 # A MAYBEUNSAFE command with no check here always asks.
 ARGCHECKS = {
-    'curl': curlok, 'date': dateok, 'find': findok, 'git': gitok,
-    'hostname': hostnameok, 'rg': rgok, 'sed': sedok, 'sort': sortok,
-    'uniq': uniqok}
+    'awk': awkok, 'command': commandok, 'curl': curlok, 'date': dateok,
+    'ffprobe': ffprobeok, 'file': fileok, 'find': findok, 'git': gitok,
+    'hostname': hostnameok, 'lsof': lsofok, 'man': manok, 'rg': rgok,
+    'sed': sedok, 'sort': sortok, 'uniq': uniqok}
 
 def commandisreadonly(command: str) -> bool:
     """True if a shell line is known to only read. Anything else asks."""
