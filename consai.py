@@ -561,7 +561,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         return f'Edited {path}: replaced {n} occurrence(s).'
 
     def _executeshell_command(self, command: str, on_chunk: Optional[Callable[[str], None]] = None, originatedby: str = 'ai') -> str:
-        """Executes a shell command after checking if it's safe.
+        """Executes a shell command. AI commands are approved in _call_bot.
 
         - Always attempts to run with a PTY (interactive-capable). If stdin is a TTY, keystrokes
           are forwarded to the child process. If not, falls back to a pseudo-tty wrapper via
@@ -570,13 +570,6 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         - When using the non-PTY streaming path, a 60s timeout is enforced.
         - If `on_chunk` is provided, output is streamed to the callback while accumulating the transcript.
         """
-        ask = originatedby == 'ai' and not commandisreadonly(command)
-        # Show the command right above its prompt. The streamed copy can be
-        # far up the screen, behind the usage line or other commands' output.
-        if ask and not self.always_approve:
-            print(f'\n{Colors.YELLOW}{command}{Colors.RESET}')
-        if ask and not self._approve('Run this command?'):
-            return 'Command execution cancelled by user.'
         # AI commands: no pager, so git and man print and exit without waiting
         pagers = {'GIT_PAGER': 'cat', 'MANPAGER': 'cat'}
         env = {**os.environ, **pagers} if originatedby == 'ai' else None
@@ -918,9 +911,11 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
     def _handle_tool_calls(self, tool_calls: List[Dict], bot_name: str):
         """Handles the execution of tool calls from the AI model."""
 
+        done = 0
         for tool_call in tool_calls:
             if self.interrupt_event.is_set():
                 break
+            done += 1
             
             tool_name = tool_call['name']
             if tool_name == 'executeshell':
@@ -987,6 +982,12 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                 }
                 self.conversation_history.append(tool_message)
 
+        # Calls skipped after No or ctrl-c still get a result, so the
+        # history stays well formed for the next request
+        for tool_call in tool_calls[done:]:
+            self.conversation_history.append({
+                'role': 'tool', 'tool_call_id': _sanitize_tool_id(tool_call['id']),
+                'content': 'Cancelled by user.'})
         if not self.interrupt_event.is_set():
             self._call_bot(bot_name)
 
@@ -1399,14 +1400,6 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                     self.bot_running = False
                     break
 
-                if result['sources']:
-                    print(f"\n{Colors.GREY}Sources:")
-                    for link, title in result['sources'].items(): print(f'  {link}  {title}')
-                    print(Colors.RESET, end='')
-
-                if result['last_usage']:
-                    self._record_and_print_usage(bot_name, result['last_usage'])
-
                 full_response = result['full_response']
                 tool_calls = result['tool_calls']
                 reasoning_details_acc = result['reasoning_details_acc']
@@ -1440,6 +1433,23 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                             print(f"Warning: Could not parse formal tool arguments: {tc['args']}")
                             # Add with empty args to maintain flow
                             all_tool_calls.append({'id': tc['id'], 'name': tc['name'], 'args': {}})
+
+                # Ask once for the whole batch, right under the streamed
+                # commands. Edits ask for themselves later, with a diff. No
+                # sets the interrupt flag, so _handle_tool_calls cancels all.
+                commands = [tc['args'].get('command') for tc in all_tool_calls
+                            if tc['name'] == 'executeshell']
+                unsafe = [c for c in commands if c and not commandisreadonly(c)]
+                plural = 's' if len(commands) > 1 else ''
+                if unsafe: self._approve(f'Run {len(commands)} command{plural}?')
+
+                if result['sources']:
+                    print(f"\n{Colors.GREY}Sources:")
+                    for link, title in result['sources'].items(): print(f'  {link}  {title}')
+                    print(Colors.RESET, end='')
+
+                if result['last_usage']:
+                    self._record_and_print_usage(bot_name, result['last_usage'])
 
                 # 2. Add the text part of the response to history (if it exists)
                 cleaned_content = full_response.strip()
