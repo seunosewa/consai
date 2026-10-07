@@ -33,6 +33,8 @@ MODELS = {
     'opus':   {'name': '~anthropic/claude-opus-latest', 'reasoning': 'medium'},
 
     # GPT
+    'luna':    {'name': '~openai/gpt-luna-latest', 'reasoning': 'medium'},
+    'terra':    {'name': '~openai/gpt-terra-latest', 'reasoning': 'medium'},
     'sol':        {'name': '~openai/gpt-sol-latest', 'reasoning': 'medium'},
     'astra':      {'name': '~openai/gpt-astra-latest', 'reasoning': 'medium'},
 
