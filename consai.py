@@ -31,6 +31,7 @@ MODELS = {
     # Claude
     'sonnet': {'name': '~anthropic/claude-sonnet-latest', 'reasoning': 'medium'},
     'opus':   {'name': '~anthropic/claude-opus-latest', 'reasoning': 'medium'},
+    'haiku': {'name': '~anthropic/claude-haiku-latest', 'reasoning': 'medium'},
 
     # GPT
     'luna':    {'name': '~openai/gpt-luna-latest', 'reasoning': 'medium'},
@@ -1053,10 +1054,18 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
             except Exception:
                 continue
 
+            # A 200 stream can still carry an error, even as its only event.
+            # Raise, so a partial answer is never stored or acted on.
+            error = event.get('error')
+            choices = event.get('choices') or []
+            if error or (choices and choices[0].get('finish_reason') == 'error'):
+                self.last_response_events = response_events
+                if isinstance(error, dict): error = error.get('message') or error
+                raise RuntimeError(f'API error in stream: {error or "finish_reason=error"}')
+
             if event.get('usage'):
                 last_usage = event.get('usage')
 
-            choices = event.get('choices', [])
             if not choices:
                 continue
             delta = choices[0].get('delta', {})

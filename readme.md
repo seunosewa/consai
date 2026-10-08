@@ -83,9 +83,13 @@ The following names and OpenRouter model IDs are configured in `consai.py`:
 | --- | --- |
 | `/sonnet` | `~anthropic/claude-sonnet-latest` |
 | `/opus` | `~anthropic/claude-opus-latest` |
+| `/haiku` | `~anthropic/claude-haiku-latest` |
+| `/luna` | `~openai/gpt-luna-latest` |
+| `/terra` | `~openai/gpt-terra-latest` |
 | `/sol` | `~openai/gpt-sol-latest` |
 | `/astra` | `~openai/gpt-astra-latest` |
 | `/pareto` | `unbiased/pareto-26.10-preview` |
+| `/grok` | `~x-ai/grok-latest` |
 | `/glmflash` | `~z-ai/glm-flash-latest` |
 | `/glm` | `~z-ai/glm-latest` |
 | `/dsflash` | `~deepseek/deepseek-flash-latest` |
@@ -183,10 +187,12 @@ The model chooses which tools to use and can continue working after their
 results arrive:
 
 - **Shell:** run local commands and return their output to the conversation.
-  Commands classified as likely read-only run automatically; other commands
-  request approval. A command that names a `.env` file is never classified
-  as read-only. AI commands set `GIT_PAGER=cat` so Git output does not wait
-  for pager input.
+  Commands print in yellow as the model writes them. When the response
+  finishes, ConsAI classifies every shell command in it. If all are likely
+  read-only, they run at once. Otherwise one prompt, directly under the
+  commands, covers all of them. A command that names a `.env` file is never
+  classified as read-only. AI commands set `GIT_PAGER=cat` and
+  `MANPAGER=cat` so Git and man output does not wait for pager input.
 - **Edit:** replace exact text in an existing UTF-8 file. ConsAI shows a
   coloured diff before approval. The match must be unique unless the model
   requests replacement of all occurrences. The edit is rejected if the file
@@ -200,16 +206,20 @@ system sandbox. Shell commands run with your account's permissions.
 
 ### Approval controls
 
-At `Yes / No / Always`, press a single key:
+A response can contain several tool calls. Its shell commands share one
+prompt, such as `Run 3 commands?`, asked once after the response finishes.
+The count includes read-only commands in the same response, since all of
+them run. Each edit still shows its diff and asks on its own when its turn
+comes. At `Yes / No / Always`, press a single key:
 
 | Key | Effect |
 | --- | --- |
-| `y` or Enter | Approve this command or edit. |
-| `n` or Escape | Decline and interrupt the current model turn. |
-| `a` | Approve this and subsequent approval requests until the current normal chat turn finishes. |
+| `y` or Enter | Approve: run every shell command in the response, or apply this edit. |
+| `n` or Escape | Decline: cancel every tool call still pending in the response and return control to you. |
+| `a` | Approve this and every later prompt, for commands and edits, until the normal chat turn returns control to you. |
 
-Other keys also decline. `Always` covers both shell commands and edits; it
-resets when the normal chat turn returns control to you.
+Other keys also decline. Cancelled tool calls are recorded as cancelled in
+the conversation, so the model sees that they did not run.
 
 ### Run a command yourself
 
@@ -228,20 +238,11 @@ They inherit your normal environment, including your Git pager settings.
 After a direct command, the next input is prefilled with `!`. Delete that
 prefix to return to chat.
 
-Leading `cd` commands change ConsAI's own working directory, so the change
-persists for later commands and model requests:
-
-```text
-! cd ~/src/myproject
-! cd -
-! cd
-! cd ~/src/myproject && pwd
-```
-
-`cd -` returns to the previous directory; bare `cd` goes home. The built-in
-handler supports a trailing command after `&&` or `;`. Use these simple
-forms: it is not a complete shell parser. Other commands run in child
-shells, so an `export` in one command does not configure later commands.
+Each command runs in its own child shell, so `cd` and `export` affect only
+that command. `! cd ~/src/myproject && pwd` prints the project path, but
+the next command starts again in ConsAI's working directory. ConsAI has no
+command for changing its working directory: quit and relaunch it from the
+directory you want.
 
 With a terminal attached, shell commands use a pseudo-terminal and forward
 keystrokes to interactive programs. The non-interactive path uses the
@@ -326,7 +327,7 @@ included when present, parent first, with their absolute paths. This is a
 two-file lookup, not a search through every ancestor directory.
 
 Use those files for project conventions and instructions. Changing the
-files or using `! cd` changes what subsequent normal requests see.
+files changes what subsequent normal requests see.
 `/ask` requests use their own system prompt instead.
 
 Model and API settings are defined in `consai.py`:
