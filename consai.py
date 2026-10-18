@@ -370,8 +370,11 @@ class CommandLineAIChat:
             print(f'{Colors.GREEN}User{Colors.RESET}:\n', end='', flush=True)
 
     def _get_system_prompt(self, bot_name: str, ask_mode: bool = False) -> str:
+        plaintext = '''Your output is printed as plain text in a terminal, not rendered.
+Do not use ** or * for emphasis and do not use # headings. Use blank lines, indentation,
+"- Label: text" lists and UPPERCASE section titles instead. Put code in ``` fences.'''
         if ask_mode:
-            return f"You are {bot_name}, a helpful AI assistant. Answer the question clearly."
+            return f"You are {bot_name}, a helpful AI assistant. Answer the question clearly.\n{plaintext}"
         
         otherbotsinfo = ", ".join([f"{name}" for name, _ in MODELS.items() if name != bot_name])
 
@@ -398,7 +401,7 @@ if you see <[:~@modelname:]> in a user message, it means the user addressed the 
 Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         '''
         environment = f'Directory: {os.getcwd()} | Date: {time.strftime("%Y-%m-%d")} | OS: {platform.system()}'
-        r = f'{toolinstructions}\n\n{conclusion}\n\n{environment}{agentrules}\n\n'
+        r = f'{toolinstructions}\n\n{plaintext}\n\n{conclusion}\n\n{environment}{agentrules}\n\n'
         return r
 
     def _get_user_input(self):
