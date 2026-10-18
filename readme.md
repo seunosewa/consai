@@ -288,7 +288,7 @@ images and the conversation context, and resets session usage counters.
 | `/lastjson` | Print the latest cached request payload and write cached response events to `/tmp/response.txt`. |
 | `/imgclear` | Discard pending image attachments. |
 | `/clear` | Clear the terminal, conversation context, pending images, and session usage counters. |
-| `<original prompt> /revert` | Remove the most recent matching user prompt and all later messages from the conversation. |
+| `/revert` or `<original prompt> /revert` | Remove the newest user prompt, or the most recent one matching the text, and all later messages from the conversation. |
 | `exit` or Ctrl-D at the input prompt | Exit ConsAI. |
 
 For example, to remove a previous question and everything after it:
@@ -300,7 +300,7 @@ Explain the authentication flow. /revert
 
 Matching ignores model tags, letter case, and extra whitespace. Direct shell
 transcript entries are excluded from matching. After reverting, re-enter
-the prompt you want to send. `/revert` alone has no target and does nothing.
+the prompt you want to send. `/revert` alone removes the newest prompt.
 It does not undo file edits, commands, or API charges, and does not reset
 usage totals.
 
@@ -316,7 +316,8 @@ the body may contain prompts, file content, tool results, or encoded images.
 
 Conversation context lives in memory and is not restored when the program
 restarts. Typed interactive input is stored separately in
-`~/.consai_history` for recall, including `/ask` input. `/clear` and `/revert`
+`~/.consai_history` for recall, including `/ask` input. A trailing `/revert`
+is not saved, so ↑ recalls the prompt itself. `/clear` and `/revert`
 do not erase that file. `/clear` also leaves the selected model, working
 directory, and last API debug data unchanged.
 

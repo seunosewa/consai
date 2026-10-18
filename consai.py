@@ -154,6 +154,7 @@ def get_single_key():
             return input().lower()
 
 HISTFILE = os.path.expanduser('~/.consai_history')
+REVERT = re.compile(r'\s*/revert\s*$', re.I)
 
 def initreadline():
     """Turns on multi-line paste and loads ~/.consai_history into readline."""
@@ -173,7 +174,10 @@ def readinput(default=''):
     try: text = input()
     finally: signal.signal(signal.SIGINT, handler); readline.set_startup_hook()
     if readline.get_current_history_length() == n: return text
-    lines = ''.join(f'+{line}\n' for line in text.split('\n'))
+    saved = REVERT.sub('', text)  # history keeps the prompt, not the /revert
+    if not saved.strip(): readline.remove_history_item(n); return text
+    readline.replace_history_item(n, saved)
+    lines = ''.join(f'+{line}\n' for line in saved.split('\n'))
     with open(HISTFILE, 'a', encoding='utf-8') as f:
         f.write(f'\n# {time.strftime("%Y-%m-%d %H:%M:%S")}\n{lines}')
     return text
@@ -1553,7 +1557,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         print(f"{Colors.GREY}  ! <command>         run it yourself now, no approval; output joins the conversation\n"
               "  /ask <prompt>       one-off question outside the conversation, no tools\n"
               "  /cd <path>          change the working directory; no path means home\n"
-              "  <prompt> /revert    drop that earlier prompt and everything after it\n"
+              "  [<prompt>] /revert  drop the last prompt, or that earlier one, and all after it\n"
               "  /img <path|url>...  attach images to the next prompt;  /imgclear discards them\n"
               "  /stats              session cost and tokens;  /lastjson prints the last request\n"
               "  /clear              clear screen, conversation and session stats\n"
@@ -1645,33 +1649,24 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                 
             # Inline revert: "<original prompt> /revert" -> remove that user prompt and everything after it
             # Handle this BEFORE parsing bots or /ask so we match the original prompt text
-            if re.search(r'\s*/revert\s*$', user_text, flags=re.IGNORECASE):
-                base_text = re.sub(r'\s*/revert\s*$', '', user_text, flags=re.IGNORECASE).strip()
-                if base_text:
-                    target_norm = self._normalize_text_for_match(base_text)
-                    target_index = None
-                    # Walk history from newest to oldest to find the most recent matching user message
-                    for idx in range(len(self.conversation_history) - 1, -1, -1):
-                        msg = self.conversation_history[idx]
-                        if msg.get('role') != 'user':
-                            continue
-                        content = _content_to_text(msg.get('content')).strip()
-                        # Skip shell transcript entries recorded as user lines starting with '! '
-                        first_line = content.splitlines()[0] if content else ''
-                        if first_line.startswith('! '):
-                            continue
-                        hist_norm = self._normalize_text_for_match(content)
-                        if hist_norm == target_norm:
-                            target_index = idx
-                            break
-                    if target_index is not None:
-                        self.conversation_history = self.conversation_history[:target_index]
-                        print('=====reverted. re-enter the prompt===')
-                    else:
-                        print('No matching prompt found; nothing reverted.')
-                else:
-                    print('Nothing to revert.')
-                # Do not add this input to history or call any bot
+            if REVERT.search(user_text):
+                base_text = REVERT.sub('', user_text).strip()
+                target_norm = self._normalize_text_for_match(base_text)
+                target_index = None
+                # Newest to oldest, skipping '! ' shell transcripts. Bare /revert takes the first hit.
+                for idx in range(len(self.conversation_history) - 1, -1, -1):
+                    msg = self.conversation_history[idx]
+                    if msg.get('role') != 'user': continue
+                    content = _content_to_text(msg.get('content')).strip()
+                    if content.startswith('! '): continue
+                    hist_norm = self._normalize_text_for_match(content)
+                    if not base_text or hist_norm == target_norm:
+                        target_index = idx
+                        break
+                if target_index is not None:
+                    self.conversation_history = self.conversation_history[:target_index]
+                    print('=====reverted. re-enter the prompt===')
+                else: print('No matching prompt found; nothing reverted.')
                 continue
 
             cleaned_text, bots_to_call, ask_mode = self._parse_input(user_text)
