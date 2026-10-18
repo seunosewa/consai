@@ -69,7 +69,9 @@ current working directory, not the script's directory.
 
 ## Chat and model selection
 
-Type a prompt and press Enter. The initial model is `sonnet`.
+Type a prompt and press Enter. The initial model is `sonnet`. Tab completes
+model names, commands, and file paths. On a blank line, or when nothing
+matches, Tab inserts a tab character.
 
 ```text
 Explain what this project does.

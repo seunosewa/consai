@@ -1,6 +1,7 @@
 import json
 import base64
 import difflib
+import glob
 import os
 import platform
 import re
@@ -155,10 +156,26 @@ def get_single_key():
 
 HISTFILE = os.path.expanduser('~/.consai_history')
 REVERT = re.compile(r'\s*/revert\s*$', re.I)
+COMMANDS = ['/ask', '/cd', '/clear', '/img', '/imgclear', '/lastjson', '/revert', '/stats']
+
+def complete(text, state):
+    """Tab completes /models, /commands and paths. With nothing to complete it inserts a tab."""
+    matches = []
+    if readline.get_line_buffer().strip():  # a blank line wants indentation, not a listing
+        matches = [f'/{n} ' for n in MODELS] + [f'{c} ' for c in COMMANDS]
+        matches = [w for w in matches if w.startswith(text)]
+        expanded = os.path.expanduser(text)  # glob needs the real path; the match keeps the ~
+        for p in glob.glob(glob.escape(expanded) + '*'):
+            matches.append(text + p[len(expanded):] + (os.sep if os.path.isdir(p) else ''))
+    matches = matches or [text + '\t']
+    return matches[state] if state < len(matches) else None
 
 def initreadline():
-    """Turns on multi-line paste and loads ~/.consai_history into readline."""
+    """Turns on multi-line paste and tab completion, loads ~/.consai_history."""
     readline.parse_and_bind('set enable-bracketed-paste on')  # off in Python
+    readline.parse_and_bind('tab: complete')  # Python binds Tab to insert-tab
+    readline.set_completer(complete)
+    readline.set_completer_delims(' \t\n')  # keep / . ~ - inside the word
     if not os.path.exists(HISTFILE): return
     entry = []
     with open(HISTFILE, encoding='utf-8', errors='replace') as f:
@@ -1550,10 +1567,9 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         print(f"Models: {models}")
         print(f"Name models anywhere in a prompt, e.g. '/opus /grok Compare these.' "
               f"Without a name, the last model answers (now /{self.last_bot_name}).")
-        print("Models can run shell commands, edit files, search the web and fetch pages. "
-              "They ask first: y/Enter = yes, n/Esc = no, a = yes to all until your next turn.")
+        print("Models can run shell commands, edit files, search the web and fetch pages.")
         print("Each request includes ../AGENTS.md and ./AGENTS.md when present. "
-              "Ctrl-C stops a model. 'exit' or Ctrl-D quits.")
+              "Tab completes models, commands and paths. Ctrl-C stops a model. 'exit' or Ctrl-D quits.")
         print(f"{Colors.GREY}  ! <command>         run it yourself now, no approval; output joins the conversation\n"
               "  /ask <prompt>       one-off question outside the conversation, no tools\n"
               "  /cd <path>          change the working directory; no path means home\n"
