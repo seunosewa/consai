@@ -189,7 +189,7 @@ results arrive:
 - **Shell:** run local commands and return their output to the conversation.
   Commands print in yellow as the model writes them. When the response
   finishes, ConsAI classifies every shell command in it. If all are likely
-  read-only, they run at once. Otherwise one prompt, directly under the
+  read-only, no shell approval is needed. Otherwise one prompt under the
   commands, covers all of them. A command that names a `.env` file is never
   classified as read-only. AI commands set `GIT_PAGER=cat` and
   `MANPAGER=cat` so Git and man output does not wait for pager input.
@@ -336,7 +336,7 @@ Model and API settings are defined in `consai.py`:
   Currently, all entries except `pareto` request medium reasoning effort.
 - `_prepare_request` sets temperature to `0.6` and defines provider routing.
   Requests set `provider.zdr = true`, specify a provider order, request
-  latency sorting, and disable fallback outside that provider list.
+  latency sorting, and enable provider fallbacks.
 - `WEBTOOLS` configures web search and fetch.
 - `retry_delays` currently permits one retry after 1.5 seconds for a failed
   model call. HTTP requests use a 60-second connection/read timeout.

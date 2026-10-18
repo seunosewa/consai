@@ -1357,7 +1357,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                               'fireworks', # kimi
                               'novita', # mimo
                               'cloudflare', # reliable
-                              'deepinfra', # generally fast and cheap
+                              ''
                     ],
                     'allow_fallbacks': True,
                 },
@@ -1541,12 +1541,22 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
 
     def run(self):
         """Main loop for the interactive chat."""
-        openrouter_names = [n for n, m in MODELS.items() if m.get('provider', 'openrouter') == 'openrouter']
-        or_line = ", ".join([f"{Colors.BLUE}{n.capitalize()}{Colors.RESET}" for n in openrouter_names])
+        models = ' '.join(f'{Colors.BLUE}/{n}{Colors.RESET}' for n in MODELS)
         print(f"{Colors.BOLD}Welcome!{Colors.RESET}")
-        print(f"  OpenRouter: {or_line}")
-        print("Type 'exit' to quit, or 'BEGIN' to start multi-line input (end with 'END').")
-        print(f"{Colors.GREY}Commands: /clear /stats /lastjson /img /imgclear{Colors.RESET}")
+        print(f"Models: {models}")
+        print(f"Name models anywhere in a prompt, e.g. '/opus /grok Compare these.' "
+              f"Without a name, the last model answers (now /{self.last_bot_name}).")
+        print("Models can run shell commands, edit files, search the web and fetch pages. "
+              "They ask first: y/Enter = yes, n/Esc = no, a = yes to all until your next turn.")
+        print("Each request includes ../AGENTS.md and ./AGENTS.md when present. "
+              "Ctrl-C stops a model. 'exit' or Ctrl-D quits.")
+        print(f"{Colors.GREY}  ! <command>         run it yourself now, no approval; output joins the conversation\n"
+              "  /ask <prompt>       one-off question outside the conversation, no tools\n"
+              "  <prompt> /revert    drop that earlier prompt and everything after it\n"
+              "  /img <path|url>...  attach images to the next prompt;  /imgclear discards them\n"
+              "  /stats              session cost and tokens;  /lastjson prints the last request\n"
+              "  /clear              clear screen, conversation and session stats\n"
+              f"  BEGIN ... END       multi-line input{Colors.RESET}")
 
         while True:
             user_text = self._get_user_input()
@@ -1568,8 +1578,8 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                         self.conversation_history.append({'role': 'user', 'content': f'! {raw_cmd}\n{output}'.rstrip()})
                     except Exception:
                         pass
-                # After a direct shell command, enable prefill for the next prompt
-                self.prefill_shell_mode = True
+                # Keep the prefill only after a real command; a bare '!' returns to chat
+                self.prefill_shell_mode = bool(raw_cmd)
                 continue
             
             # If we are here, it's a message for the AI, so disable prefill
