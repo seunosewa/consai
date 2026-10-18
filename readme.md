@@ -240,9 +240,9 @@ prefix to return to chat.
 
 Each command runs in its own child shell, so `cd` and `export` affect only
 that command. `! cd ~/src/myproject && pwd` prints the project path, but
-the next command starts again in ConsAI's working directory. ConsAI has no
-command for changing its working directory: quit and relaunch it from the
-directory you want.
+the next command starts again in ConsAI's working directory. Use `/cd <path>`
+to change ConsAI's working directory for subsequent commands. Use `/cd`
+without a path to return to your home directory.
 
 With a terminal attached, shell commands use a pseudo-terminal and forward
 keystrokes to interactive programs. The non-interactive path uses the
@@ -283,6 +283,7 @@ images and the conversation context, and resets session usage counters.
 
 | Interactive command | Effect |
 | --- | --- |
+| `/cd <path>` | Change the working directory for shell commands, edits, AGENTS.md lookup, and the models. No path means home. The directory shows after the `User:` label. |
 | `/stats` | Show session cost and token totals, plus recorded usage for each request. |
 | `/lastjson` | Print the latest cached request payload and write cached response events to `/tmp/response.txt`. |
 | `/imgclear` | Discard pending image attachments. |

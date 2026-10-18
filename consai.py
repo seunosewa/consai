@@ -384,7 +384,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         """Gets input from the user with readline editing and history."""
         try:
             # Print the "User:" label on its own line first
-            print(f'\n{Colors.GREEN}User:{Colors.RESET}')
+            print(f'\n{Colors.GREEN}User:{Colors.RESET} {Colors.GREY}{os.getcwd()}{Colors.RESET}')
             # Beep on user turn except the very first time
             if self._has_shown_user_label_once:
                 self._play_completion_beep()
@@ -1552,6 +1552,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
               "Ctrl-C stops a model. 'exit' or Ctrl-D quits.")
         print(f"{Colors.GREY}  ! <command>         run it yourself now, no approval; output joins the conversation\n"
               "  /ask <prompt>       one-off question outside the conversation, no tools\n"
+              "  /cd <path>          change the working directory; no path means home\n"
               "  <prompt> /revert    drop that earlier prompt and everything after it\n"
               "  /img <path|url>...  attach images to the next prompt;  /imgclear discards them\n"
               "  /stats              session cost and tokens;  /lastjson prints the last request\n"
@@ -1606,6 +1607,12 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
 
             if user_text.strip().lower() == '/lastjson':
                 self._print_last_json()
+                continue
+
+            if re.match(r'^/cd(?:\s|$)', user_text.strip(), re.I):
+                target = user_text.strip()[3:].strip() or '~'
+                try: os.chdir(os.path.expanduser(target))
+                except OSError as e: print(f'{Colors.RED}{e}{Colors.RESET}')
                 continue
 
             # Image attachments: attach one or more images to the *next* prompt.
