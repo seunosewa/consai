@@ -162,18 +162,21 @@ def complete(text, state):
     """Tab completes /models, /commands and paths. With nothing to complete it inserts a tab."""
     matches = []
     if readline.get_line_buffer().strip():  # a blank line wants indentation, not a listing
-        matches = [f'/{n} ' for n in MODELS] + [f'{c} ' for c in COMMANDS]
-        matches = [w for w in matches if w.startswith(text)]
-        expanded = os.path.expanduser(text)  # glob needs the real path; the match keeps the ~
-        for p in glob.glob(glob.escape(expanded) + '*'):
-            matches.append(text + p[len(expanded):] + (os.sep if os.path.isdir(p) else ''))
+        if text.startswith('/'):
+            matches = [f'/{n} ' for n in MODELS] + [f'{c} ' for c in COMMANDS]
+            matches = [w for w in matches if w.startswith(text)]
+        if not matches:
+            expanded = os.path.expanduser(text)  # glob needs the real path; the match keeps the ~
+            for p in glob.glob(glob.escape(expanded) + '*'):
+                matches.append(text + p[len(expanded):] + (os.sep if os.path.isdir(p) else ''))
     matches = matches or [text + '\t']
     return matches[state] if state < len(matches) else None
 
 def initreadline():
     """Turns on multi-line paste and tab completion, loads ~/.consai_history."""
     readline.parse_and_bind('set enable-bracketed-paste on')  # off in Python
-    readline.parse_and_bind('tab: complete')  # Python binds Tab to insert-tab
+    bind = 'bind ^I rl_complete' if 'libedit' in (readline.__doc__ or '') else 'tab: complete'
+    readline.parse_and_bind(bind)  # Python binds Tab to insert-tab
     readline.set_completer(complete)
     readline.set_completer_delims(' \t\n')  # keep / . ~ - inside the word
     if not os.path.exists(HISTFILE): return
@@ -192,7 +195,8 @@ def readinput(default=''):
     finally: signal.signal(signal.SIGINT, handler); readline.set_startup_hook()
     if readline.get_current_history_length() == n: return text
     saved = REVERT.sub('', text)  # history keeps the prompt, not the /revert
-    if not saved.strip(): readline.remove_history_item(n); return text
+    dup = saved != text and n > 0 and readline.get_history_item(n) == saved
+    if not saved.strip() or dup: readline.remove_history_item(n); return text
     readline.replace_history_item(n, saved)
     lines = ''.join(f'+{line}\n' for line in saved.split('\n'))
     with open(HISTFILE, 'a', encoding='utf-8') as f:
@@ -444,19 +448,20 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
 
     def _parse_input(self, user_text):
         """Parse input, keeping models in order of first appearance."""
-        ask_mode = '/ask' in user_text
-        user_text = user_text.replace('/ask', '').strip()
+        askpat = r'(?:^|(?<=\s))/ask(?=\s|$)'
+        ask_mode = bool(re.search(askpat, user_text, re.I))
+        user_text = re.sub(askpat, '', user_text, flags=re.I).strip()
 
         botcommands = []
         names = '|'.join(re.escape(bot) for bot in MODELS)
-        pattern = rf'/({names})(?=\s|$|[^\w])'
+        pattern = rf'(?:^|(?<=\s))/({names})(?=\s|$|[^\w/])'
 
         def replace(match):
-            bot = match[1]
+            bot = match[1].lower()
             if bot not in botcommands: botcommands.append(bot)
             return f'<[:~@{bot}:]>'
 
-        user_text = re.sub(pattern, replace, user_text)
+        user_text = re.sub(pattern, replace, user_text, flags=re.I)
         return user_text, botcommands, ask_mode
 
 
@@ -1381,7 +1386,6 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                               'fireworks', # kimi
                               'novita', # mimo
                               'cloudflare', # reliable
-                              ''
                     ],
                     'allow_fallbacks': True,
                 },
@@ -1633,8 +1637,8 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                 continue
 
             if re.match(r'^/cd(?:\s|$)', user_text.strip(), re.I):
-                target = user_text.strip()[3:].strip() or '~'
-                try: os.chdir(os.path.expanduser(target))
+                target = user_text.strip()[3:].strip().strip('\'"') or '~'
+                try: os.chdir(os.path.expanduser(os.path.expandvars(target)))
                 except OSError as e: print(f'{Colors.RED}{e}{Colors.RESET}')
                 continue
 
