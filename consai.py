@@ -1567,8 +1567,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         # Mark bot as no longer running
         self.bot_running = False
 
-    def run(self):
-        """Main loop for the interactive chat."""
+    def _print_welcome(self):
         models = ' '.join(f'{Colors.BLUE}/{n}{Colors.RESET}' for n in MODELS)
         print(f"{Colors.BOLD}Welcome!{Colors.RESET}")
         print(f"Models: {models}")
@@ -1585,6 +1584,10 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
               "  /stats              session cost and tokens;  /lastjson prints the last request\n"
               "  /clear              clear screen, conversation and session stats\n"
               f"  BEGIN ... END       multi-line input{Colors.RESET}")
+
+    def run(self):
+        """Main loop for the interactive chat."""
+        self._print_welcome()
 
         while True:
             user_text = self._get_user_input()
@@ -1626,6 +1629,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                 self.session_reasoning_tokens = 0
                 self.session_cached_tokens = 0
                 print(f"{Colors.YELLOW}[Screen, context and session stats cleared]{Colors.RESET}")
+                self._print_welcome()
                 continue
 
             if user_text.strip().lower() == '/stats':
