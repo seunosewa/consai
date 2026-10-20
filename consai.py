@@ -156,7 +156,7 @@ def get_single_key():
 
 HISTFILE = os.path.expanduser('~/.consai_history')
 REVERT = re.compile(r'\s*/revert\s*$', re.I)
-COMMANDS = ['/ask', '/cd', '/clear', '/img', '/imgclear', '/lastjson', '/revert', '/stats']
+COMMANDS = ['/always', '/ask', '/cd', '/clear', '/img', '/imgclear', '/lastjson', '/revert', '/stats']
 
 def complete(text, state):
     """Tab completes /models, /commands and paths. With nothing to complete it inserts a tab."""
@@ -501,6 +501,11 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         ask_mode = bool(re.search(askpat, user_text, re.I))
         user_text = re.sub(askpat, '', user_text, flags=re.I).strip()
 
+        # /always pre-answers every approval prompt for this turn
+        alwayspat = r'(?:^|(?<=\s))/always(?=\s|$)'
+        always_mode = bool(re.search(alwayspat, user_text, re.I))
+        user_text = re.sub(alwayspat, '', user_text, flags=re.I).strip()
+
         botcommands = []
         names = '|'.join(re.escape(bot) for bot in MODELS)
         pattern = rf'(?:^|(?<=\s))/({names})(?=\s|$|[^\w/])'
@@ -511,7 +516,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
             return f'<[:~@{bot}:]>'
 
         user_text = re.sub(pattern, replace, user_text, flags=re.I)
-        return user_text, botcommands, ask_mode
+        return user_text, botcommands, ask_mode, always_mode
 
 
     def _prepare_messages(self, bot_name: str, ask_mode: bool = False) -> List[Dict]:
@@ -585,9 +590,13 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         except Exception:
             return (text or '').strip().lower()
 
-    def _approve(self, question: str) -> bool:
+    def _approve(self, question: str, detail: str = '') -> bool:
         """Asks Yes / No / Always. Any answer but Yes or Always sets the interrupt flag."""
-        if self.always_approve: return True
+        if self.always_approve:
+            # /always or the Always key: still show what was approved
+            print(f'{Colors.GREY}{question} auto-approved{Colors.RESET}')
+            if detail: print(f'{Colors.GREY}{detail}{Colors.RESET}')
+            return True
         try:
             self._play_completion_beep()  # Beep when asking for permission
             print(f'{Colors.RED}{question} (Yes / No / Always) {Colors.RESET}', end='', flush=True)
@@ -1598,7 +1607,9 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                             if tc['name'] == 'executeshell']
                 unsafe = [c for c in commands if c and not commandisreadonly(c)]
                 plural = 's' if len(commands) > 1 else ''
-                if unsafe: self._approve(f'Run {len(commands)} command{plural}?')
+                if unsafe:
+                    self._approve(f'Run {len(commands)} command{plural}?',
+                                  '\n'.join(f'  {c}' for c in unsafe))
 
                 if result['sources']:
                     print(f"\n{Colors.GREY}Sources:")
@@ -1696,6 +1707,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
               "Tab completes models, commands and paths. Ctrl-C stops a model. 'exit' or Ctrl-D quits.")
         print(f"{Colors.GREY}  ! <command>         run it yourself now, no approval; output joins the conversation\n"
               "  /ask <prompt>       one-off question outside the conversation, no tools\n"
+              "  /always <prompt>    approve every prompt this turn; each approval still prints\n"
               "  /cd <path>          change the working directory; no path means home\n"
               "  [<prompt>] /revert  drop the last prompt, or that earlier one, and all after it\n"
               "  /img <path|url>...  attach images to the next prompt;  /imgclear discards them\n"
@@ -1814,7 +1826,12 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                 else: print('No matching prompt found; nothing reverted.')
                 continue
 
-            cleaned_text, bots_to_call, ask_mode = self._parse_input(user_text)
+            cleaned_text, bots_to_call, ask_mode, always_mode = self._parse_input(user_text)
+
+            # /always pre-approves this turn only; run() clears it afterwards
+            if always_mode:
+                self.always_approve = True
+                print(f'{Colors.GREY}/always: approving every prompt this turn{Colors.RESET}')
 
             if ask_mode:
                 backup_history = self.conversation_history
@@ -2123,7 +2140,10 @@ if __name__ == '__main__':
             print(user_text, flush=True)
 
         # Process exactly like a single REPL turn (except for the '!' direct-shell shortcut).
-        cleaned_text, bots_to_call, ask_mode = app._parse_input(user_text)
+        cleaned_text, bots_to_call, ask_mode, always_mode = app._parse_input(user_text)
+
+        # /always pre-approves this run only
+        if always_mode: app.always_approve = True
 
         if ask_mode:
             backup_history = app.conversation_history
