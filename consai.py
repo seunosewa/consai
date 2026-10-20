@@ -26,48 +26,50 @@ from typing import Dict, List, Optional, Callable
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-# TODO: allow manual specification of reasoning intensity. resets on model change
+# Reasoning effort sent with every request. OpenRouter translates the level for
+# each model; how it handles a level a model lacks varies by provider.
+EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
 
 MODELS = {
     # Claude
-    'sonnet': {'name': '~anthropic/claude-sonnet-latest', 'reasoning': 'medium'},
-    'opus':   {'name': '~anthropic/claude-opus-latest', 'reasoning': 'medium'},
-    'haiku': {'name': '~anthropic/claude-haiku-latest', 'reasoning': 'medium'},
+    'sonnet': {'name': '~anthropic/claude-sonnet-latest'},
+    'opus':   {'name': '~anthropic/claude-opus-latest'},
+    'haiku': {'name': '~anthropic/claude-haiku-latest'},
 
     # GPT
-    'luna':    {'name': '~openai/gpt-luna-latest', 'reasoning': 'medium'},
-    'terra':    {'name': '~openai/gpt-terra-latest', 'reasoning': 'medium'},
-    'sol':        {'name': '~openai/gpt-sol-latest', 'reasoning': 'medium'},
-    'astra':      {'name': '~openai/gpt-astra-latest', 'reasoning': 'medium'},
+    'luna':    {'name': '~openai/gpt-luna-latest'},
+    'terra':    {'name': '~openai/gpt-terra-latest'},
+    'sol':        {'name': '~openai/gpt-sol-latest'},
+    'astra':      {'name': '~openai/gpt-astra-latest'},
 
     # Unbiased
-    'pareto': {'name': 'unbiased/pareto-26.10-preview'}, # very good at explaining concepts
+    'pareto': {'name': '~unbiased/pareto-latest'}, # very good at explaining concepts
 
     # Grok
-    'grok': {'name': '~x-ai/grok-latest', 'reasoning': 'medium'},
+    'grok': {'name': '~x-ai/grok-latest'},
 
     # GLM
-    'glmflash':  {'name': '~z-ai/glm-flash-latest', 'reasoning': 'medium'},
-    'glm': {'name': '~z-ai/glm-latest', 'reasoning': 'medium'},
+    'glmflash':  {'name': '~z-ai/glm-flash-latest'},
+    'glm': {'name': '~z-ai/glm-latest'},
 
     # DeepSeek
-    'dsflash': {'name': '~deepseek/deepseek-flash-latest', 'reasoning': 'medium'},
-    'dspro':   {'name': '~deepseek/deepseek-pro-latest', 'reasoning': 'medium'},
+    'dsflash': {'name': '~deepseek/deepseek-flash-latest'},
+    'dspro':   {'name': '~deepseek/deepseek-pro-latest'},
 
     # Kimi
-    'kimi': {'name': '~moonshotai/kimi-latest', 'reasoning': 'medium'},
+    'kimi': {'name': '~moonshotai/kimi-latest'},
     
     # MiMo
-    'mimoflash': {'name': 'xiaomi/mimo-v2.6-flash', 'reasoning': 'medium'},
-    'mimopro':   {'name': 'xiaomi/mimo-v2.6-pro', 'reasoning': 'medium'},
+    'mimoflash': {'name': 'xiaomi/mimo-v2.6-flash'},
+    'mimopro':   {'name': 'xiaomi/mimo-v2.6-pro'},
 
     # Qwen
-    'qwen': {'name': 'qwen/qwen3.8-2.4t-a95b', 'reasoning': 'medium'},
-    'qwen27b': {'name': 'qwen/qwen3.8-27b', 'reasoning': 'medium'},
+    'qwen': {'name': 'qwen/qwen3.8-2.4t-a95b'},
+    'qwen27b': {'name': 'qwen/qwen3.8-27b'},
 
     # Gemini
-    'geminiflash': {'name': '~google/gemini-flash-latest', 'reasoning': 'medium'},
-    'geminipro':   {'name': '~google/gemini-pro-latest', 'reasoning': 'medium'},
+    'geminiflash': {'name': '~google/gemini-flash-latest'},
+    'geminipro':   {'name': '~google/gemini-pro-latest'},
 }
 
 # ANSI color codes
@@ -156,7 +158,7 @@ def get_single_key():
 
 HISTFILE = os.path.expanduser('~/.consai_history')
 REVERT = re.compile(r'\s*/revert\s*$', re.I)
-COMMANDS = ['/always', '/ask', '/cd', '/clear', '/img', '/imgclear', '/lastjson', '/revert', '/stats']
+COMMANDS = ['/always', '/ask', '/cd', '/clear', '/effort:', '/img', '/imgclear', '/lastjson', '/revert', '/stats']
 
 def complete(text, state):
     """Tab completes /models, /commands and paths. With nothing to complete it inserts a tab."""
@@ -289,6 +291,7 @@ class CommandLineAIChat:
         self.last_response_events: Optional[List[Dict]] = None
         self._has_shown_user_label_once = False
         self.pending_image_urls: List[str] = []
+        self.effort = 'medium'
 
         self.shell_tool_definition = {
             'type': 'function',
@@ -506,6 +509,12 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         always_mode = bool(re.search(alwayspat, user_text, re.I))
         user_text = re.sub(alwayspat, '', user_text, flags=re.I).strip()
 
+        # /effort:<level> sets the reasoning effort for this and later turns
+        effortpat = r'(?:^|(?<=\s))/effort:\s*(\w+)(?=\s|$)'
+        found = re.search(effortpat, user_text, re.I)
+        effort = found[1].lower() if found else None
+        if found: user_text = (user_text[:found.start()] + user_text[found.end():]).strip()
+
         botcommands = []
         names = '|'.join(re.escape(bot) for bot in MODELS)
         pattern = rf'(?:^|(?<=\s))/({names})(?=\s|$|[^\w/])'
@@ -516,7 +525,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
             return f'<[:~@{bot}:]>'
 
         user_text = re.sub(pattern, replace, user_text, flags=re.I)
-        return user_text, botcommands, ask_mode, always_mode
+        return user_text, botcommands, ask_mode, always_mode, effort
 
 
     def _prepare_messages(self, bot_name: str, ask_mode: bool = False) -> List[Dict]:
@@ -690,15 +699,10 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         if not os.path.isfile(path): return f'Error: file not found: {path}'
         try:
             with open(path, encoding='utf-8', newline='') as f:
-                if start is None and end is None:
-                    # stop counting at 2001: enough to know the file is too long
-                    total = sum(1 for _, _ in zip(f, range(2001)))
-                    if not total: return f'{path} is empty.'
-                    if total > 2000:
-                        return f'Error: {path} has more than 2000 lines. Give start_line and end_line.'
-                else:
-                    total = sum(1 for _ in f)
-                    if not total: return f'{path} is empty.'
+                total = sum(1 for _ in f)
+                if not total: return f'{path} is empty.'
+                if (start is None or end is None) and total > 2000:
+                    return f'Error: {path} has {total} lines, more than 2000. Give both start_line and end_line.'
                 start = 1 if start is None else max(1, int(start))
                 if start > total: return f'Error: start_line {start} is past the end ({total} lines).'
                 end = total if end is None else min(int(end), total)
@@ -1522,11 +1526,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                                     self.readtool] + WEBTOOLS
                 payload['tool_choice'] = 'auto'
 
-            if r := MODELS[model_key].get('reasoning'):
-                if isinstance(r, str):
-                    payload['reasoning'] = {'effort': r, 'enabled': True, 'exclude': False}
-                else:
-                    payload['reasoning'] = {'enabled': True, 'exclude': False}
+            payload['reasoning'] = {'effort': self.effort, 'enabled': True, 'exclude': False}
 
             url = self.api_url
 
@@ -1707,6 +1707,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
               "  /ask <prompt>       one-off question outside the conversation, no tools\n"
               "  /always <prompt>    approve every prompt this turn; each approval still prints\n"
               "  /cd <path>          change the working directory; no path means home\n"
+              "  /effort:<level>     reasoning effort: low, medium, high, xhigh, max\n"
               "  [<prompt>] /revert  drop the last prompt, or that earlier one, and all after it\n"
               "  /img <path|url>...  attach images to the next prompt;  /imgclear discards them\n"
               "  /stats              session cost and tokens;  /lastjson prints the last request\n"
@@ -1824,7 +1825,14 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                 else: print('No matching prompt found; nothing reverted.')
                 continue
 
-            cleaned_text, bots_to_call, ask_mode, always_mode = self._parse_input(user_text)
+            cleaned_text, bots_to_call, ask_mode, always_mode, effort = self._parse_input(user_text)
+
+            if effort and effort not in EFFORTS:
+                print(f'{Colors.RED}Unknown effort: {effort}. Use {", ".join(EFFORTS)}.{Colors.RESET}')
+                continue
+            if effort:
+                self.effort = effort
+                print(f'{Colors.GREY}Reasoning effort: {effort}{Colors.RESET}')
 
             # /always pre-approves this turn only; run() clears it afterwards
             if always_mode:
@@ -2138,7 +2146,11 @@ if __name__ == '__main__':
             print(user_text, flush=True)
 
         # Process exactly like a single REPL turn (except for the '!' direct-shell shortcut).
-        cleaned_text, bots_to_call, ask_mode, always_mode = app._parse_input(user_text)
+        cleaned_text, bots_to_call, ask_mode, always_mode, effort = app._parse_input(user_text)
+
+        if effort and effort not in EFFORTS:
+            raise SystemExit(f'Unknown effort: {effort}. Use {", ".join(EFFORTS)}.')
+        if effort: app.effort = effort
 
         # /always pre-approves this run only
         if always_mode: app.always_approve = True

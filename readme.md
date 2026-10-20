@@ -91,7 +91,7 @@ The following names and OpenRouter model IDs are configured in `consai.py`:
 | `/terra` | `~openai/gpt-terra-latest` |
 | `/sol` | `~openai/gpt-sol-latest` |
 | `/astra` | `~openai/gpt-astra-latest` |
-| `/pareto` | `unbiased/pareto-26.10-preview` |
+| `/pareto` | `~unbiased/pareto-latest` |
 | `/grok` | `~x-ai/grok-latest` |
 | `/glmflash` | `~z-ai/glm-flash-latest` |
 | `/glm` | `~z-ai/glm-latest` |
@@ -311,11 +311,30 @@ Use `/imgclear` to discard queued images without sending them. Images
 already sent remain in the conversation. `/clear` removes both queued
 images and the conversation context, and resets session usage counters.
 
+## Reasoning effort
+
+Every request asks for a reasoning effort level. The default is `medium`.
+Change it with `/effort:<level>`, using `low`, `medium`, `high`, `xhigh`, or
+`max`:
+
+```text
+/effort:high /opus Review the error handling in consai.py.
+/effort:low Summarise this file.
+```
+
+The setting lasts for the rest of the session, across model switches, `/ask`
+prompts, and `/clear`. It is not saved between runs. OpenRouter translates
+the level for each model, and how it handles a level a model lacks varies by
+provider: Gemini, for example, treats `xhigh` as `high`. `/pareto` does not
+support reasoning, so the setting has no effect on it. An unknown level
+prints the accepted list and sends nothing.
+
 ## Context, usage, and debugging
 
 | Interactive command | Effect |
 | --- | --- |
 | `/cd <path>` | Change the working directory for shell commands, edits, AGENTS.md lookup, and the models. No path means home. The directory shows after the `User:` label. |
+| `/effort:<level>` | Set the reasoning effort for this and later requests: `low`, `medium`, `high`, `xhigh`, or `max`. Default is `medium`. |
 | `/stats` | Show session cost and token totals, plus recorded usage for each request. |
 | `/lastjson` | Print the latest cached request payload and write cached response events to `/tmp/response.txt`. |
 | `/imgclear` | Discard pending image attachments. |
@@ -366,8 +385,10 @@ files changes what subsequent normal requests see.
 
 Model and API settings are defined in `consai.py`:
 
-- `MODELS` sets bot names, model IDs, and optional reasoning settings.
-  Currently, all entries except `pareto` request medium reasoning effort.
+- `MODELS` sets bot names and model IDs.
+- `EFFORTS` lists the reasoning levels `/effort:` accepts. Every request sends
+  the current level, `medium` by default. OpenRouter translates it for each
+  model.
 - `_prepare_request` sets temperature to `0.6` and defines provider routing.
   Requests set `provider.zdr = true`, specify a provider order, request
   latency sorting, and enable provider fallbacks.
@@ -375,9 +396,9 @@ Model and API settings are defined in `consai.py`:
 - `retry_delays` currently permits one retry after 1.5 seconds for a failed
   model call. HTTP requests use a 60-second connection/read timeout.
 
-There are no interactive commands for changing temperature, reasoning
-effort, or provider routing. Edit the configuration and restart to change
-them. ZDR routing restricts eligible endpoints and can leave a model with
+There are no interactive commands for changing temperature or provider
+routing. Edit the configuration and restart to change them. ZDR routing
+restricts eligible endpoints and can leave a model with
 no route; see [OpenRouter's provider routing documentation](https://openrouter.ai/docs/guides/routing/provider-selection).
 It does not remove ConsAI's local input history or debug files.
 
@@ -402,8 +423,8 @@ It does not remove ConsAI's local input history or debug files.
   changed during approval.
 - **Create rejected:** the path already exists. Use Edit for existing files,
   or choose a new path.
-- **Read rejected:** the file has more than 2000 lines and no line range was
-  given. Ask for a `start_line` and `end_line`.
+- **Read rejected:** the file has more than 2000 lines and `start_line` or
+  `end_line` is missing. Ask for both.
 - **No notification sound:** the program uses macOS `afplay`, or
   `powershell.exe` for a Windows beep when available in WSL. Without either,
   it runs silently. It beeps at approval prompts and when returning to user
