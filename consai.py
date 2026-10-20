@@ -313,7 +313,7 @@ class CommandLineAIChat:
             'type': 'function',
             'function': {
                 'name': 'Edit',
-                'description': 'Performs exact string replacement in a file. '
+                'description': 'Performs exact string replacement in an existing file. '
                                'old_string must match the file exactly, including indentation, and be unique, or the edit fails. '
                                'replace_all: true replaces every occurrence instead.',
                 'parameters': {
@@ -325,6 +325,55 @@ class CommandLineAIChat:
                         'replace_all': {'type': 'boolean', 'description': 'Replace all occurrences of old_string (default false)'},
                     },
                     'required': ['file_path', 'old_string', 'new_string']
+                }
+            }
+        }
+        self.createtool = {
+            'type': 'function',
+            'function': {
+                'name': 'Create',
+                'description': 'Creates a new file with the given content. '
+                               'Fails if the file already exists; use Edit to change an existing file.',
+                'parameters': {
+                    'type': 'object',
+                    'properties': {
+                        'file_path': {'type': 'string', 'description': 'The absolute path of the file to create'},
+                        'content': {'type': 'string', 'description': 'The full content of the new file'},
+                    },
+                    'required': ['file_path', 'content']
+                }
+            }
+        }
+        self.deletetool = {
+            'type': 'function',
+            'function': {
+                'name': 'Delete',
+                'description': 'Deletes a file. This is permanent; the diff preview and approval prompt are the only guard.',
+                'parameters': {
+                    'type': 'object',
+                    'properties': {
+                        'file_path': {'type': 'string', 'description': 'The absolute path of the file to delete'},
+                    },
+                    'required': ['file_path']
+                }
+            }
+        }
+        self.readtool = {
+            'type': 'function',
+            'function': {
+                'name': 'Read',
+                'description': 'Reads a file and returns its lines prefixed with 1-based line numbers '
+                               'and a tab. The numbers are not part of the file content; never include '
+                               'them in old_string. Files longer than 2000 lines require start_line and '
+                               'end_line. The range is inclusive and never truncated.',
+                'parameters': {
+                    'type': 'object',
+                    'properties': {
+                        'file_path': {'type': 'string', 'description': 'The absolute path of the file to read'},
+                        'start_line': {'type': 'integer', 'description': 'First line to return (1-based)'},
+                        'end_line': {'type': 'integer', 'description': 'Last line to return (inclusive)'},
+                    },
+                    'required': ['file_path']
                 }
             }
         }
@@ -393,7 +442,7 @@ Do not use ** or * for emphasis and do not use # headings. Use blank lines, inde
                 except Exception:
                     pass
 
-        toolinstructions = f'''Use your Edit tool to change existing files. Create new files with the shell.
+        toolinstructions = f'''Use your Read, Edit, Create and Delete tools to read, change, create and delete files. Don't shell commands like: cat, sed, rm.
 Use your web search tool to search the web. Use your web fetch tool to read a web page.
 All backup files or temporary scripts should go into {tempdir}.
 Open and read files before mentioning them. Never guess what they contain. Always read them.'''
@@ -591,6 +640,65 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
             with open(path, 'w', encoding='utf-8', newline='') as f: f.write(newtext)
         except OSError as e: return f'Error writing {path}: {e}'
         return f'Edited {path}: replaced {n} occurrence(s).'
+
+    def _createfile(self, path, content) -> str:
+        """Creates a new file. Fails if it already exists. Returns the tool result text."""
+        if not path or not isinstance(content, str):
+            return 'Error: file_path and content are required.'
+        if not content: return 'Error: content is empty.'
+        path = os.path.realpath(os.path.expanduser(path))
+        if os.path.exists(path): return f'Error: file already exists: {path}. Use Edit instead.'
+        self._printdiff(path, '', content)
+        if not self._approve('Create this file?'): return 'Create cancelled by user.'
+        try:
+            with open(path, 'x', encoding='utf-8', newline='') as f: f.write(content)
+        except FileExistsError: return f'Error: file already exists: {path}. Use Edit instead.'
+        except OSError as e: return f'Error writing {path}: {e}'
+        return f'Created {path}.'
+
+    def _deletefile(self, path) -> str:
+        """Deletes a file. Returns the tool result text."""
+        if not path: return 'Error: file_path is required.'
+        path = os.path.abspath(os.path.expanduser(path))  # not realpath: delete a link, not its target
+        if not os.path.isfile(path): return f'Error: file not found: {path}'
+        try:
+            with open(path, encoding='utf-8', newline='') as f: text = f.read()
+        except (OSError, UnicodeDecodeError) as e: return f'Error reading {path}: {e}'
+        self._printdiff(path, text, '')
+        if not self._approve('Delete this file?'): return 'Delete cancelled by user.'
+        try:
+            with open(path, encoding='utf-8', newline='') as f: changed = f.read() != text
+        except (OSError, UnicodeDecodeError): changed = True
+        if changed: return 'Error: file changed on disk during approval. Nothing deleted. Re-read it and retry.'
+        try: os.remove(path)
+        except OSError as e: return f'Error deleting {path}: {e}'
+        return f'Deleted {path}.'
+
+    def _readfile(self, path, start=None, end=None) -> str:
+        """Returns numbered lines from a file. 1-based, inclusive, never truncated."""
+        if not path: return 'Error: file_path is required.'
+        path = os.path.abspath(os.path.expanduser(path))
+        if not os.path.isfile(path): return f'Error: file not found: {path}'
+        try:
+            with open(path, encoding='utf-8', newline='') as f:
+                if start is None and end is None:
+                    # stop counting at 2001: enough to know the file is too long
+                    total = sum(1 for _, _ in zip(f, range(2001)))
+                    if not total: return f'{path} is empty.'
+                    if total > 2000:
+                        return f'Error: {path} has more than 2000 lines. Give start_line and end_line.'
+                else:
+                    total = sum(1 for _ in f)
+                    if not total: return f'{path} is empty.'
+                start = 1 if start is None else max(1, int(start))
+                if start > total: return f'Error: start_line {start} is past the end ({total} lines).'
+                end = total if end is None else min(int(end), total)
+                if end < start: return 'Error: end_line is before start_line.'
+                f.seek(0)
+                out = [f'{i}\t{line.rstrip(chr(10)).rstrip(chr(13))}'
+                       for i, line in enumerate(f, 1) if start <= i <= end]
+        except (OSError, UnicodeDecodeError) as e: return f'Error reading {path}: {e}'
+        return '\n'.join(out)
 
     def _executeshell_command(self, command: str, on_chunk: Optional[Callable[[str], None]] = None, originatedby: str = 'ai') -> str:
         """Executes a shell command. AI commands are approved in _call_bot.
@@ -992,12 +1100,20 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                     }
                     print(f"{Colors.RED}{tool_message['content']}{Colors.RESET}")
                     self.conversation_history.append(tool_message)
-            elif tool_name == 'Edit':
+            elif tool_name in ('Edit', 'Create', 'Delete', 'Read'):
                 args = tool_call.get('args') or {}
                 try:
-                    output = self._editfile(args.get('file_path'), args.get('old_string'),
-                                            args.get('new_string'), args.get('replace_all') is True)
-                except Exception as e: output = f'Error processing Edit: {e}'
+                    if tool_name == 'Edit':
+                        output = self._editfile(args.get('file_path'), args.get('old_string'),
+                                                args.get('new_string'), args.get('replace_all') is True)
+                    elif tool_name == 'Create':
+                        output = self._createfile(args.get('file_path'), args.get('content'))
+                    elif tool_name == 'Delete':
+                        output = self._deletefile(args.get('file_path'))
+                    else:
+                        output = self._readfile(args.get('file_path'), args.get('start_line'),
+                                                args.get('end_line'))
+                except Exception as e: output = f'Error processing {tool_name}: {e}'
                 color = Colors.RED if output.startswith('Error') else Colors.GREEN
                 print(f'{color}{output}{Colors.RESET}')
                 self.conversation_history.append({
@@ -1392,7 +1508,9 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                 'temperature': 0.6
             }
             if include_tools:
-                payload['tools'] = [self.shell_tool_definition, self.edittool] + WEBTOOLS
+                payload['tools'] = [self.shell_tool_definition, self.edittool,
+                                    self.createtool, self.deletetool,
+                                    self.readtool] + WEBTOOLS
                 payload['tool_choice'] = 'auto'
 
             if r := MODELS[model_key].get('reasoning'):
