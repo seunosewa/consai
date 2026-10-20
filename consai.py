@@ -26,7 +26,7 @@ from typing import Dict, List, Optional, Callable
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-# TODO: allow manual specification of reasoning intensity or allowed tokens. resets on model change
+# TODO: allow manual specification of reasoning intensity. resets on model change
 
 MODELS = {
     # Claude
@@ -1523,11 +1523,9 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                 payload['tool_choice'] = 'auto'
 
             if r := MODELS[model_key].get('reasoning'):
-                if isinstance(r, int):
-                    payload['reasoning'] = {'max_tokens': r, 'enabled': True, 'exclude': False}
-                elif isinstance(r, str):
+                if isinstance(r, str):
                     payload['reasoning'] = {'effort': r, 'enabled': True, 'exclude': False}
-                elif r:
+                else:
                     payload['reasoning'] = {'enabled': True, 'exclude': False}
 
             url = self.api_url

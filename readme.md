@@ -4,9 +4,10 @@ ConsAI is a terminal system admin and devops assistant that connects to multiple
 AI models through OpenRouter. Models share a conversation, so you can switch
 between them or ask several for their views.
 
-In normal chat, models can run local shell commands, edit files, search the
-web, and fetch web pages. You can also attach images, run commands yourself,
-ask questions outside the main conversation, and inspect usage and costs.
+In normal chat, models can run local shell commands, read, create, edit and
+delete files, search the web, and fetch web pages. You can also attach images,
+run commands yourself, ask questions outside the main conversation, and
+inspect usage and costs.
 
 ## Setup and launch
 
@@ -151,9 +152,9 @@ the main context. Multiple selected models still share this temporary
 conversation. Usage still counts toward the session totals, and the last
 model called becomes the default for the next prompt.
 
-`/ask` runs without tools: the model cannot run shell commands, edit files,
-search the web, or fetch pages. It uses a short question-answering system
-prompt instead of the normal project instructions.
+`/ask` runs without tools: the model cannot run shell commands, read, create,
+edit or delete files, search the web, or fetch pages. It uses a short
+question-answering system prompt instead of the normal project instructions.
 
 ## Run a prompt from the command line
 
@@ -164,18 +165,20 @@ python3 consai.py 'Explain what a reverse proxy does.'
 python3 consai.py '/opus Review consai.py for error handling problems.'
 python3 consai.py '/sonnet /astra Compare queues and publish-subscribe systems.'
 python3 consai.py '/ask /pareto Explain eventual consistency.'
+python3 consai.py '/always /opus Run the tests and fix any failures.'
 ```
 
-All arguments are joined into one prompt. Model selection and `/ask` work
-here, and tool calls can still request approval. Use an interactive terminal
-when approval may be needed.
+All arguments are joined into one prompt. Model selection, `/ask` and
+`/always` work here, and tool calls can still request approval. Use an
+interactive terminal when approval may be needed, or add `/always` to approve
+every tool call in advance.
 
 Other interactive commands, including `!`, `/img`, `/stats`, and
 `/clear`, are not dispatched in this mode. There is no command-line option
 parser: `--help` is treated as prompt text, not a help flag. Standard input
 is not loaded as the prompt.
 
-## Shell commands, file edits, and web tools
+## Shell commands, file tools, and web tools
 
 Ask for a task in plain language:
 
@@ -195,10 +198,18 @@ results arrive:
   commands, covers all of them. A command that names a `.env` file is never
   classified as read-only. AI commands set `GIT_PAGER=cat` and
   `MANPAGER=cat` so Git and man output does not wait for pager input.
+- **Read:** return a file's lines with 1-based line numbers and a tab. Files
+  longer than 2000 lines need an explicit `start_line` and `end_line`; a
+  requested range is always returned in full. Reading needs no approval.
 - **Edit:** replace exact text in an existing UTF-8 file. ConsAI shows a
   coloured diff before approval. The match must be unique unless the model
   requests replacement of all occurrences. The edit is rejected if the file
-  changes while approval is pending. New files are created through the shell.
+  changes while approval is pending.
+- **Create:** write a new UTF-8 file. It fails if the path already exists, so
+  existing files must be changed with Edit. ConsAI shows the full content as a
+  diff before approval.
+- **Delete:** remove a file after showing its content as a diff. The path is
+  resolved without following symlinks, so a link is deleted, not its target.
 - **Web search and fetch:** ask OpenRouter's server tools to search or read
   pages using Exa. Fetches request at most 20,000 content tokens. Normal chat
   prints a Sources list when the API returns URL citations.
@@ -211,17 +222,36 @@ system sandbox. Shell commands run with your account's permissions.
 A response can contain several tool calls. Its shell commands share one
 prompt, such as `Run 3 commands?`, asked once after the response finishes.
 The count includes read-only commands in the same response, since all of
-them run. Each edit still shows its diff and asks on its own when its turn
-comes. At `Yes / No / Always`, press a single key:
+them run. Each Edit, Create and Delete still shows its diff and asks on its
+own when its turn comes. At `Yes / No / Always`, press a single key:
 
 | Key | Effect |
 | --- | --- |
-| `y` or Enter | Approve: run every shell command in the response, or apply this edit. |
+| `y` or Enter | Approve: run every shell command in the response, or apply this edit, create or delete. |
 | `n` or Escape | Decline: cancel every tool call still pending in the response and return control to you. |
-| `a` | Approve this and every later prompt, for commands and edits, until the normal chat turn returns control to you. |
+| `a` | Approve this and every later prompt, for commands and file changes, until the normal chat turn returns control to you. |
 
 Other keys also decline. Cancelled tool calls are recorded as cancelled in
 the conversation, so the model sees that they did not run.
+
+To approve a whole turn before any prompt appears, add `/always` anywhere in
+your prompt:
+
+```text
+/always /opus Fix the failing tests and run them until they pass.
+```
+
+`/always` has the same effect as pressing `a` at the first prompt: every
+shell command and every Edit, Create and Delete runs without asking until the
+turn returns control to you. It must be a separate word; letter case does not
+matter. It is removed from the prompt before the model sees it. Use it only
+for tasks you would approve anyway, since the model can then run any command
+your account can.
+
+Approvals are not silent. Edit, Create and Delete still show their diffs, and
+each approval prints a grey `... auto-approved` line. For shell commands, that
+line is followed by the commands that needed approval. The same lines appear
+after you press `a`. Ctrl-C still stops the model.
 
 ### Run a command yourself
 
@@ -370,6 +400,10 @@ It does not remove ConsAI's local input history or debug files.
 - **Edit rejected:** the old text must match exactly. Ask the model to read
   the file again if there is no match, more than one match, or the file
   changed during approval.
+- **Create rejected:** the path already exists. Use Edit for existing files,
+  or choose a new path.
+- **Read rejected:** the file has more than 2000 lines and no line range was
+  given. Ask for a `start_line` and `end_line`.
 - **No notification sound:** the program uses macOS `afplay`, or
   `powershell.exe` for a Windows beep when available in WSL. Without either,
   it runs silently. It beeps at approval prompts and when returning to user
