@@ -1184,7 +1184,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
         
         buffering_first_line = True
         first_line_buffer = ''
-        sources = {}  # url -> title, from web search citations
+        sources = {}  # url -> url_citation, from web search annotations
 
         STOP_TOKENS = {"<|im_start|>", "<|im_end|>", "<|endoftext|>", "<|repo_name|>"}
 
@@ -1233,7 +1233,7 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
 
             for note in delta.get('annotations') or []:
                 cite = note.get('url_citation') or {}
-                if cite.get('url'): sources.setdefault(cite['url'], cite.get('title') or '')
+                if cite.get('url'): sources.setdefault(cite['url'], cite)
 
             if 'reasoning' in delta and delta.get('reasoning'):
                 reasoning_text = delta.get('reasoning')
@@ -1611,8 +1611,17 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
 
                 if result['sources']:
                     print(f"\n{Colors.GREY}Sources:")
-                    for link, title in result['sources'].items(): print(f'  {link}  {title}')
+                    for link, cite in result['sources'].items():
+                        print(f"  {link}  {cite.get('title') or ''}")
                     print(Colors.RESET, end='')
+                    # Store the results and excerpts, so later requests and
+                    # other models see what this search returned
+                    found = '\n\n'.join(
+                        f"[{i}] {c.get('title') or ''}\n{url}\n{c.get('content') or ''}"
+                        for i, (url, c) in enumerate(result['sources'].items(), 1))
+                    self.conversation_history.append({'role': 'user', 'content':
+                        f'Web search results that {bot_name} received '
+                        f'(added by consai, not typed by User):\n\n{found}'})
 
                 if result['last_usage']:
                     self._record_and_print_usage(bot_name, result['last_usage'])
@@ -1809,12 +1818,14 @@ Never add <[:~modelname said~:]> or <[:~@modelname:]> to your responses.
                 base_text = REVERT.sub('', user_text).strip()
                 target_norm = self._normalize_text_for_match(base_text)
                 target_index = None
-                # Newest to oldest, skipping '! ' shell transcripts. Bare /revert takes the first hit.
+                # Newest to oldest, skipping '! ' shell transcripts and web
+                # search results. Bare /revert takes the first hit.
                 for idx in range(len(self.conversation_history) - 1, -1, -1):
                     msg = self.conversation_history[idx]
                     if msg.get('role') != 'user': continue
                     content = _content_to_text(msg.get('content')).strip()
-                    if content.startswith('! '): continue
+                    if content.startswith(('! ', 'Web search results that ')):
+                        continue
                     hist_norm = self._normalize_text_for_match(content)
                     if not base_text or hist_norm == target_norm:
                         target_index = idx

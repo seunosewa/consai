@@ -11,7 +11,7 @@ inspect usage and costs.
 
 ## Setup and launch
 
-You need Python 3.9 or newer, a terminal on macOS, Linux, or Windows with WSL,
+You need Python 3.8 or newer, a terminal on macOS, Linux, or Windows with WSL,
 and an OpenRouter API key. The program imports Unix terminal modules such as
 `termios` and `pty`, so run it inside WSL rather than native Windows Python.
 API calls require an internet connection and available OpenRouter credits.
@@ -109,9 +109,9 @@ This table describes the local configuration. Availability, image support,
 and tool support depend on the selected model and its OpenRouter route.
 
 Use `/model-name` anywhere in a prompt to address a model. A prompt without
-a model name goes to the last model called. Normal model commands are
-lowercase. Switching models keeps the conversation, including earlier
-model replies and tool results.
+a model name goes to the last model called. Model commands ignore letter
+case, so `/Sonnet` and `/sonnet` are the same. Switching models keeps the
+conversation, including earlier model replies and tool results.
 
 You can address several models in one prompt:
 
@@ -168,8 +168,9 @@ python3 consai.py '/ask /pareto Explain eventual consistency.'
 python3 consai.py '/always /opus Run the tests and fix any failures.'
 ```
 
-All arguments are joined into one prompt. Model selection, `/ask` and
-`/always` work here, and tool calls can still request approval. Use an
+All arguments are joined into one prompt. Model selection, `/ask`,
+`/always` and `/effort:<level>` work here, and tool calls can still request
+approval. Use an
 interactive terminal when approval may be needed, or add `/always` to approve
 every tool call in advance.
 
@@ -268,7 +269,8 @@ and output are added to the conversation so the models can use the results.
 They inherit your normal environment, including your Git pager settings.
 
 After a direct command, the next input is prefilled with `!`. Delete that
-prefix to return to chat.
+prefix to return to chat. A bare `!` with no command does nothing and is
+not prefilled again.
 
 Each command runs in its own child shell, so `cd` and `export` affect only
 that command. `! cd ~/src/myproject && pwd` prints the project path, but
@@ -325,9 +327,10 @@ Change it with `/effort:<level>`, using `low`, `medium`, `high`, `xhigh`, or
 The setting lasts for the rest of the session, across model switches, `/ask`
 prompts, and `/clear`. It is not saved between runs. OpenRouter translates
 the level for each model, and how it handles a level a model lacks varies by
-provider: Gemini, for example, treats `xhigh` as `high`. `/pareto` does not
-support reasoning, so the setting has no effect on it. An unknown level
-prints the accepted list and sends nothing.
+provider: Gemini, for example, treats `xhigh` as `high`. ConsAI sends the
+level for every model, including `/pareto`; that model does not support
+reasoning, so the provider ignores it. An unknown level prints the accepted
+list and sends nothing.
 
 ## Context, usage, and debugging
 
@@ -391,7 +394,9 @@ Model and API settings are defined in `consai.py`:
   model.
 - `_prepare_request` sets temperature to `0.6` and defines provider routing.
   Requests set `provider.zdr = true`, specify a provider order, request
-  latency sorting, and enable provider fallbacks.
+  latency sorting, and enable provider fallbacks. It also sends the fixed
+  `HTTP-Referer` and `X-Title` headers, which label the traffic in
+  OpenRouter's activity log.
 - `WEBTOOLS` configures web search and fetch.
 - `retry_delays` currently permits one retry after 1.5 seconds for a failed
   model call. HTTP requests use a 60-second connection/read timeout.
