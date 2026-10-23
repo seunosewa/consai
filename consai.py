@@ -111,7 +111,7 @@ NETRO = ('dig', 'host', 'netstat', 'ping', 'traceroute')
 MISCRO = ('clear', 'false', 'seq', 'sleep', 'test', 'true', 'type', 'whereis', 'which', 'yes')
 MACOSRO = ('jq',) # 'open', 'xargs' unsafe
 ROLIST = TEXTRO + FSRO + SYSRO + NETRO + MISCRO + MACOSRO
-MAYBEUNSAFE = ('awk', 'command', 'curl', 'date', 'dmesg', 'ffprobe', 'file', 'find', 'git', 'history', 'hostname', 'lsof', 'man', 'rg', 'sed', 'sort', 'tree', 'uniq')
+MAYBEUNSAFE = ('awk', 'command', 'curl', 'date', 'dmesg', 'ffprobe', 'file', 'find', 'git', 'history', 'hostname', 'lsof', 'man', 'rg', 'rpm', 'sed', 'sort', 'tree', 'uniq')
 
 
 # Web tools that OpenRouter runs for the model (server tools).
@@ -2118,13 +2118,52 @@ def commandok(args: List[str]) -> bool:
     """True if command only looks names up. Without -v or -V it runs one."""
     return args[:1] in (['-v'], ['-V'])
 
+# rpm: query, verify with --noscripts and checksig only read. Not here, so
+# they ask: install, upgrade, erase, --restore, --import, --initdb,
+# --rebuilddb, --root, --dbpath, --pipe, -D/--define, -E/--eval, --load,
+# --macros, --rcfile, --specfile
+RPMMODES = {'--query', '--verify', '--checksig', '--querytags', '--version'}
+RPMLONG = RPMMODES | {
+    '--all', '--file', '--group', '--package', '--path', '--querybynumber',
+    '--tid', '--triggeredby', '--whatprovides', '--whatrequires',
+    '--whatobsoletes', '--whatconflicts', '--whatrecommends', '--whatsuggests',
+    '--whatsupplements', '--whatenhances', '--noglob', '--nomanifest',
+    '--artifactfiles', '--configfiles', '--docfiles', '--licensefiles',
+    '--noartifact', '--noconfig', '--noghost', '--info', '--list', '--state',
+    '--dump', '--qf', '--queryformat', '--scripts', '--changelog', '--changes',
+    '--conflicts', '--obsoletes', '--provides', '--requires', '--recommends',
+    '--suggests', '--supplements', '--enhances', '--triggers',
+    '--triggerscripts', '--filetriggers', '--filetriggerscripts',
+    '--filesbypkg', '--fileclass', '--filemime', '--filecolor',
+    '--fileprovide', '--filerequire', '--filecaps', '--xml', '--json',
+    '--nodeps', '--nodigest', '--nosignature', '--nofiles', '--noscripts',
+    '--nolinkto', '--nofiledigest', '--nosize', '--nouser', '--nogroup',
+    '--nomtime', '--nomode', '--nordev', '--nocaps', '--verbose', '--quiet',
+    # These two pipe their output through sort, sed and uniq
+    '--last', '--dupes'}
+
+def rpmok(args: List[str]) -> bool:
+    """True if rpm queries, verifies without scripts or checks signatures.
+    -i means install unless -q is on the line, so a read mode must be present.
+    A --qf value is skipped. rpm takes the next word as it, even -q."""
+    words, args = iter(args), []
+    for a in words:
+        args.append(a)
+        if a in ('--qf', '--queryformat'): next(words, None)
+    if not flagsok(args, 'acdfgilpqsvAKLPRV', '', RPMLONG): return False
+    short = ''.join(a[1:] for a in args if a[:1] == '-' and a[:2] != '--')
+    # Verify runs a package's %verifyscript unless --noscripts is given
+    verify = 'V' in short or '--verify' in args
+    if verify and '--noscripts' not in args: return False
+    return bool(set('qVK') & set(short)) or bool(RPMMODES & set(args))
+
 # MAYBEUNSAFE command -> check that returns True if its arguments only read.
 # A MAYBEUNSAFE command with no check here always asks.
 ARGCHECKS = {
     'awk': awkok, 'command': commandok, 'curl': curlok, 'date': dateok,
     'ffprobe': ffprobeok, 'file': fileok, 'find': findok, 'git': gitok,
     'hostname': hostnameok, 'lsof': lsofok, 'man': manok, 'rg': rgok,
-    'sed': sedok, 'sort': sortok, 'uniq': uniqok}
+    'rpm': rpmok, 'sed': sedok, 'sort': sortok, 'uniq': uniqok}
 
 def commandisreadonly(command: str) -> bool:
     """True if a shell line is known to only read. Anything else asks."""
